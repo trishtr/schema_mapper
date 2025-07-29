@@ -1,11 +1,10 @@
 """
 Embedding service for generating and managing schema embeddings.
 """
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Any, Optional
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import chromadb
-from chromadb.config import Settings
 import json
 import logging
 from datetime import datetime
