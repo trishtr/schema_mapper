@@ -1,20 +1,26 @@
 """
-Business rules and data type compatibility configurations.
+Business rules and data type compatibility configuration.
 """
-from typing import List, Dict
+from typing import Dict, List, Any, Optional
 
-# Field descriptions for common healthcare fields
+# Healthcare field descriptions
 HEALTHCARE_FIELDS = {
     "patient_id": "Unique identifier for patient records",
-    "npi": "National Provider Identifier for healthcare providers",
+    "npi": "National Provider Identifier",
     "icd_code": "International Classification of Diseases code",
-    "diagnosis": "Medical diagnosis description",
-    "medication": "Prescribed medication name",
-    "dosage": "Medication dosage amount",
-    "vital_signs": "Patient vital sign measurements",
-    "lab_results": "Laboratory test results",
-    "procedure_code": "Medical procedure identifier code",
-    "insurance_id": "Health insurance identifier"
+    "provider_id": "Unique identifier for healthcare providers",
+    "specialty": "Medical specialty or practice area",
+    "license_number": "Professional license or certification number",
+    "dea_number": "Drug Enforcement Administration number",
+    "facility_id": "Healthcare facility identifier",
+    "diagnosis": "Medical diagnosis or condition",
+    "procedure_code": "Medical procedure identifier",
+    "medication_code": "Medication or drug identifier",
+    "visit_id": "Healthcare visit or encounter identifier",
+    "insurance_id": "Insurance policy or member identifier",
+    "claim_id": "Healthcare claim identifier",
+    "lab_result_id": "Laboratory result identifier",
+    "order_id": "Medical order or prescription identifier"
 }
 
 # Data type compatibility matrix
@@ -23,77 +29,99 @@ DATA_TYPE_COMPATIBILITY = {
     "INTEGER": ["INTEGER", "BIGINT", "SMALLINT", "INT"],
     "FLOAT": ["FLOAT", "DOUBLE", "DECIMAL", "NUMERIC"],
     "DATE": ["DATE", "TIMESTAMP", "DATETIME"],
-    "BOOLEAN": ["BOOLEAN", "TINYINT", "BIT"],
-    "TEXT": ["TEXT", "VARCHAR", "CHAR", "STRING"],
+    "BOOLEAN": ["BOOLEAN", "BOOL", "BIT"],
     "TIMESTAMP": ["TIMESTAMP", "DATETIME", "DATE"],
+    "TEXT": ["TEXT", "VARCHAR", "CHAR", "STRING"],
     "NUMERIC": ["NUMERIC", "DECIMAL", "FLOAT", "DOUBLE"]
 }
 
-def get_field_description(field_name: str) -> str:
-    """Get description for a known field."""
-    # Convert to lowercase for case-insensitive matching
-    field_lower = field_name.lower()
-    
-    # Check exact matches
-    if field_lower in HEALTHCARE_FIELDS:
-        return HEALTHCARE_FIELDS[field_lower]
+# Field constraints
+FIELD_CONSTRAINTS = {
+    "id": {
+        "required": True,
+        "unique": True,
+        "min_length": 1
+    },
+    "name": {
+        "required": True,
+        "min_length": 2
+    },
+    "email": {
+        "required": False,
+        "pattern": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+    },
+    "phone": {
+        "required": False,
+        "pattern": r"^\+?1?\d{9,15}$"
+    },
+    "date": {
+        "required": True,
+        "min_value": "1900-01-01",
+        "max_value": "2100-12-31"
+    }
+}
+
+def get_field_description(field_name: str) -> Optional[str]:
+    """Get description for a healthcare field."""
+    # Check exact match
+    if field_name in HEALTHCARE_FIELDS:
+        return HEALTHCARE_FIELDS[field_name]
     
     # Check partial matches
-    for key, desc in HEALTHCARE_FIELDS.items():
-        if key in field_lower or field_lower in key:
-            return desc
+    for key, description in HEALTHCARE_FIELDS.items():
+        if key in field_name or field_name in key:
+            return description
     
-    return ""
+    return None
 
 def get_compatible_types(data_type: str) -> List[str]:
     """Get list of compatible data types."""
     data_type = data_type.upper()
     
-    # Direct compatibility
+    # Check direct compatibility
     if data_type in DATA_TYPE_COMPATIBILITY:
         return DATA_TYPE_COMPATIBILITY[data_type]
     
-    # Reverse lookup
-    for primary_type, compatible_types in DATA_TYPE_COMPATIBILITY.items():
+    # Check reverse compatibility
+    for base_type, compatible_types in DATA_TYPE_COMPATIBILITY.items():
         if data_type in compatible_types:
-            return [primary_type] + compatible_types
+            return [base_type] + compatible_types
     
-    return [data_type]  # Return original type if no compatibility found
+    return [data_type]
 
-def is_type_compatible(source_type: str, target_type: str) -> bool:
-    """Check if two data types are compatible."""
-    source_type = source_type.upper()
-    target_type = target_type.upper()
-    
-    # Check direct compatibility
-    compatible_types = get_compatible_types(source_type)
-    return target_type in compatible_types
-
-def get_field_constraints(field_name: str, data_type: str) -> Dict:
-    """Get common constraints for a field."""
-    field_lower = field_name.lower()
+def get_field_constraints(
+    field_name: str,
+    data_type: str
+) -> Dict[str, Any]:
+    """Get constraints for a field."""
     constraints = {}
     
-    # ID fields
-    if "id" in field_lower or field_lower.endswith("_id"):
-        constraints["unique"] = True
-        constraints["nullable"] = False
+    # Check field-specific constraints
+    for pattern, rules in FIELD_CONSTRAINTS.items():
+        if pattern in field_name:
+            constraints.update(rules)
     
-    # Email fields
-    if "email" in field_lower:
-        constraints["format"] = "email"
-        constraints["max_length"] = 255
+    # Add type-specific constraints
+    if "INT" in data_type.upper():
+        constraints.update({
+            "min_value": -2147483648,
+            "max_value": 2147483647
+        })
+    elif "VARCHAR" in data_type.upper():
+        constraints.update({
+            "max_length": 255
+        })
+    elif "TEXT" in data_type.upper():
+        constraints.update({
+            "max_length": 65535
+        })
     
-    # Date fields
-    if any(x in field_lower for x in ["date", "time", "timestamp"]):
-        constraints["format"] = "datetime"
-    
-    # Code fields
-    if field_lower.endswith("_code"):
-        constraints["max_length"] = 50
-        
-    # Name fields
-    if field_lower.endswith("_name"):
-        constraints["max_length"] = 100
-        
-    return constraints 
+    return constraints
+
+def is_type_compatible(
+    source_type: str,
+    target_type: str
+) -> bool:
+    """Check if two data types are compatible."""
+    compatible_types = get_compatible_types(source_type)
+    return target_type.upper() in [t.upper() for t in compatible_types] 

@@ -1,96 +1,56 @@
 """
 Configuration for schema mapping rules and validation.
 """
-from typing import Dict, List, Any
+from typing import Dict, Any, List
 import re
 from difflib import SequenceMatcher
 
-# Type compatibility matrix with confidence scores
+# Type compatibility matrix
 TYPE_COMPATIBILITY = {
-    "VARCHAR": {
-        "VARCHAR": 1.0,
-        "TEXT": 0.9,
-        "CHAR": 0.8,
-        "STRING": 0.8
-    },
-    "INTEGER": {
-        "INTEGER": 1.0,
-        "BIGINT": 0.9,
-        "SMALLINT": 0.8,
-        "INT": 0.9
-    },
-    "FLOAT": {
-        "FLOAT": 1.0,
-        "DOUBLE": 0.9,
-        "DECIMAL": 0.8,
-        "NUMERIC": 0.8
-    },
-    "DATE": {
-        "DATE": 1.0,
-        "TIMESTAMP": 0.9,
-        "DATETIME": 0.9
-    }
+    "VARCHAR": ["VARCHAR", "TEXT", "CHAR", "STRING"],
+    "INTEGER": ["INTEGER", "BIGINT", "SMALLINT", "INT"],
+    "FLOAT": ["FLOAT", "DOUBLE", "DECIMAL", "NUMERIC"],
+    "DATE": ["DATE", "TIMESTAMP", "DATETIME"],
+    "BOOLEAN": ["BOOLEAN", "BOOL", "BIT"],
+    "TIMESTAMP": ["TIMESTAMP", "DATETIME", "DATE"],
+    "TEXT": ["TEXT", "VARCHAR", "CHAR", "STRING"],
+    "NUMERIC": ["NUMERIC", "DECIMAL", "FLOAT", "DOUBLE"]
 }
 
-# Field name patterns with confidence scores
+# Field name patterns
 FIELD_PATTERNS = {
-    "id": {
-        "patterns": [r"_id$", r"^id_", r"^id$"],
-        "score": 0.9
-    },
-    "name": {
-        "patterns": [r"_name$", r"^name_", r"^name$"],
-        "score": 0.8
-    },
-    "date": {
-        "patterns": [r"_date$", r"_at$", r"timestamp"],
-        "score": 0.8
-    },
-    "email": {
-        "patterns": [r"_email$", r"^email_", r"^email$"],
-        "score": 0.9
-    },
-    "code": {
-        "patterns": [r"_code$", r"^code_"],
-        "score": 0.8
-    }
+    "id": r".*_?id$",
+    "email": r".*_?email.*",
+    "phone": r".*_?(phone|tel|mobile).*",
+    "date": r".*_?(date|dt)$",
+    "name": r".*_?name$",
+    "code": r".*_?code$",
+    "status": r".*_?status$",
+    "type": r".*_?type$",
+    "description": r".*_?(desc|description)$"
 }
 
-# Value patterns with validation rules
+# Value patterns
 VALUE_PATTERNS = {
-    "email": {
-        "pattern": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
-        "score": 0.9
-    },
-    "date": {
-        "pattern": r"^\d{4}-\d{2}-\d{2}",
-        "score": 0.8
-    },
-    "phone": {
-        "pattern": r"^\+?[\d\-\(\)]+$",
-        "score": 0.8
-    },
-    "numeric": {
-        "pattern": r"^-?\d*\.?\d+$",
-        "score": 0.7
-    }
+    "email": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
+    "phone": r"^\+?1?\d{9,15}$",
+    "date_iso": r"^\d{4}-\d{2}-\d{2}$",
+    "uuid": r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    "numeric": r"^-?\d*\.?\d+$"
 }
 
-def calculate_name_similarity(source: str, target: str) -> float:
-    """Calculate similarity between field names."""
-    # Convert to lowercase
-    source = source.lower()
-    target = target.lower()
+def calculate_name_similarity(
+    source_name: str,
+    target_name: str
+) -> float:
+    """Calculate similarity between column names."""
+    # Clean names
+    source_clean = re.sub(r'[_\s]', '', source_name.lower())
+    target_clean = re.sub(r'[_\s]', '', target_name.lower())
     
-    # Remove common prefixes/suffixes
-    common_affixes = ["id", "code", "name", "date", "key"]
-    for affix in common_affixes:
-        source = source.replace(affix, "")
-        target = target.replace(affix, "")
-    
-    # Calculate similarity
-    similarity = SequenceMatcher(None, source, target).ratio()
-    return similarity
+    # Use sequence matcher
+    matcher = SequenceMatcher(None, source_clean, target_clean)
+    return matcher.ratio()
 
 def calculate_type_compatibility(
     source_type: str,
@@ -100,177 +60,163 @@ def calculate_type_compatibility(
     source_type = source_type.upper()
     target_type = target_type.upper()
     
-    # Check direct compatibility
+    # Direct match
+    if source_type == target_type:
+        return 1.0
+    
+    # Compatible types
     if source_type in TYPE_COMPATIBILITY:
-        compatibility = TYPE_COMPATIBILITY[source_type]
-        if target_type in compatibility:
-            return compatibility[target_type]
+        compatible_types = TYPE_COMPATIBILITY[source_type]
+        if target_type in compatible_types:
+            return 0.8
     
-    # Check reverse compatibility
-    for base_type, compatibles in TYPE_COMPATIBILITY.items():
-        if target_type in compatibles:
-            if source_type == base_type:
-                return compatibles[target_type]
-    
+    # Incompatible
     return 0.0
 
-def check_field_pattern(field_name: str) -> Dict[str, Any]:
-    """Check field name against known patterns."""
-    field_name = field_name.lower()
-    matches = []
+def check_field_pattern(
+    column_name: str,
+    sample_values: List[str]
+) -> Dict[str, bool]:
+    """Check if column name matches known patterns."""
+    matches = {}
     
-    for category, info in FIELD_PATTERNS.items():
-        for pattern in info["patterns"]:
-            if re.search(pattern, field_name):
-                matches.append({
-                    "category": category,
-                    "score": info["score"]
-                })
-    
-    return {
-        "matches": matches,
-        "max_score": max([m["score"] for m in matches]) if matches else 0.0
-    }
+    for pattern_name, pattern in FIELD_PATTERNS.items():
+        if re.match(pattern, column_name.lower()):
+            matches[pattern_name] = True
+            
+    return matches
 
 def check_value_pattern(
-    value: str,
-    data_type: str
-) -> Dict[str, Any]:
-    """Check value against known patterns."""
-    matches = []
-    
-    for pattern_type, info in VALUE_PATTERNS.items():
-        if re.match(info["pattern"], str(value)):
-            matches.append({
-                "type": pattern_type,
-                "score": info["score"]
-            })
-    
-    return {
-        "matches": matches,
-        "max_score": max([m["score"] for m in matches]) if matches else 0.0
+    sample_values: List[str]
+) -> Dict[str, float]:
+    """Check if sample values match known patterns."""
+    pattern_matches = {
+        pattern: 0.0 for pattern in VALUE_PATTERNS
     }
+    
+    if not sample_values:
+        return pattern_matches
+    
+    # Check each value against each pattern
+    for value in sample_values:
+        if not value:
+            continue
+            
+        value_str = str(value)
+        for pattern_name, pattern in VALUE_PATTERNS.items():
+            if re.match(pattern, value_str):
+                pattern_matches[pattern_name] += 1
+    
+    # Calculate match percentages
+    total_values = len([v for v in sample_values if v])
+    if total_values > 0:
+        for pattern in pattern_matches:
+            pattern_matches[pattern] /= total_values
+    
+    return pattern_matches
 
 def calculate_multi_factor_score(
     name_similarity: float,
     type_compatibility: float,
-    pattern_score: float,
-    value_score: float
+    pattern_matches: Dict[str, bool],
+    value_matches: Dict[str, float]
 ) -> float:
-    """Calculate combined confidence score."""
-    weights = {
-        "name": 0.3,
-        "type": 0.3,
-        "pattern": 0.2,
-        "value": 0.2
-    }
-    
-    score = (
-        name_similarity * weights["name"] +
-        type_compatibility * weights["type"] +
-        pattern_score * weights["pattern"] +
-        value_score * weights["value"]
+    """Calculate overall mapping score."""
+    # Base score from name and type
+    base_score = (
+        name_similarity * 0.4 +
+        type_compatibility * 0.3
     )
     
-    return round(score, 2)
+    # Pattern bonus
+    pattern_score = len(pattern_matches) * 0.1
+    base_score += min(pattern_score, 0.2)
+    
+    # Value pattern bonus
+    value_score = max(value_matches.values()) * 0.1
+    base_score += value_score
+    
+    return min(base_score, 1.0)
 
 def apply_mapping_rules(
     source_column: Dict[str, Any],
-    target_column: Dict[str, Any]
+    target_matches: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
-    """Apply all mapping rules to calculate confidence."""
-    # Calculate name similarity
+    """Apply mapping rules to potential matches."""
+    if not target_matches:
+        return {
+            "valid": False,
+            "reason": "No target matches found"
+        }
+    
+    best_match = target_matches[0]
+    
+    # Calculate scores
     name_similarity = calculate_name_similarity(
         source_column["name"],
-        target_column["name"]
+        best_match["column_name"]
     )
     
-    # Calculate type compatibility
     type_compatibility = calculate_type_compatibility(
         source_column["data_type"],
-        target_column["data_type"]
+        best_match["data_type"]
     )
     
-    # Check field patterns
-    source_patterns = check_field_pattern(source_column["name"])
-    target_patterns = check_field_pattern(target_column["name"])
-    pattern_score = min(
-        source_patterns["max_score"],
-        target_patterns["max_score"]
+    pattern_matches = check_field_pattern(
+        source_column["name"],
+        source_column.get("sample_values", [])
     )
     
-    # Check value patterns
-    value_score = 0.0
-    if "sample_values" in source_column and "sample_values" in target_column:
-        source_values = source_column["sample_values"][:3]
-        target_values = target_column["sample_values"][:3]
-        
-        source_scores = [
-            check_value_pattern(v, source_column["data_type"])["max_score"]
-            for v in source_values
-        ]
-        target_scores = [
-            check_value_pattern(v, target_column["data_type"])["max_score"]
-            for v in target_values
-        ]
-        
-        value_score = (
-            sum(source_scores) / len(source_scores) if source_scores else 0.0 +
-            sum(target_scores) / len(target_scores) if target_scores else 0.0
-        ) / 2
+    value_matches = check_value_pattern(
+        source_column.get("sample_values", [])
+    )
     
     # Calculate final score
-    confidence_score = calculate_multi_factor_score(
+    final_score = calculate_multi_factor_score(
         name_similarity,
         type_compatibility,
-        pattern_score,
-        value_score
+        pattern_matches,
+        value_matches
     )
     
     return {
-        "confidence_score": confidence_score,
-        "factors": {
-            "name_similarity": name_similarity,
-            "type_compatibility": type_compatibility,
-            "pattern_score": pattern_score,
-            "value_score": value_score
-        },
-        "pattern_matches": {
-            "source": source_patterns["matches"],
-            "target": target_patterns["matches"]
-        }
+        "valid": final_score >= 0.6,
+        "name_similarity": name_similarity,
+        "type_compatibility": type_compatibility,
+        "pattern_matches": pattern_matches,
+        "value_matches": value_matches,
+        "final_score": final_score
     }
 
+def calculate_confidence_score(
+    rule_results: Dict[str, Any],
+    semantic_relationships: List[str]
+) -> float:
+    """Calculate confidence score from rule results."""
+    if not rule_results["valid"]:
+        return 0.0
+    
+    base_score = rule_results["final_score"]
+    
+    # Semantic relationship bonus
+    relationship_bonus = len(semantic_relationships) * 0.1
+    final_score = base_score + min(relationship_bonus, 0.2)
+    
+    return min(final_score, 1.0)
+
 def validate_mapping(
-    mapping_result: Dict[str, Any],
-    validation_rules: Dict[str, Any] = None
-) -> Dict[str, Any]:
-    """Validate mapping result against rules."""
-    validation = {
-        "is_valid": True,
-        "warnings": [],
-        "errors": []
-    }
+    rule_results: Dict[str, Any]
+) -> bool:
+    """Validate mapping results."""
+    if not rule_results["valid"]:
+        return False
     
-    # Check confidence threshold
-    if mapping_result["confidence_score"] < 0.7:
-        validation["warnings"].append(
-            "Low confidence score, manual review recommended"
-        )
+    # Check minimum scores
+    if (
+        rule_results["name_similarity"] < 0.3 or
+        rule_results["type_compatibility"] < 0.5 or
+        rule_results["final_score"] < 0.6
+    ):
+        return False
     
-    # Check type compatibility
-    if mapping_result["factors"]["type_compatibility"] < 0.5:
-        validation["errors"].append(
-            "Incompatible data types"
-        )
-        validation["is_valid"] = False
-    
-    # Apply custom validation rules
-    if validation_rules:
-        for rule_name, rule_func in validation_rules.items():
-            result = rule_func(mapping_result)
-            if not result["is_valid"]:
-                validation["errors"].extend(result["errors"])
-                validation["is_valid"] = False
-    
-    return validation 
+    return True 
