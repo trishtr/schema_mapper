@@ -1,180 +1,195 @@
 """
 Configuration for data profiling rules and thresholds.
 """
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 import re
 
-# Profiling thresholds
+# Quality thresholds
 THRESHOLDS = {
-    "completeness": 0.95,  # Minimum completeness ratio
-    "validity": 0.98,      # Minimum validity ratio
-    "consistency": 0.90,   # Minimum consistency ratio
-    "uniqueness": 0.01,    # Minimum unique ratio for non-key fields
-    "key_uniqueness": 0.95  # Minimum unique ratio for key fields
+    "completeness": 0.95,  # Max 5% null values
+    "validity": 0.98,      # Max 2% invalid values
+    "consistency": 0.90,   # Max 10% inconsistent values
+    "uniqueness": 0.05     # Min 5% unique values
 }
 
 # Quality assessment weights
 QUALITY_WEIGHTS = {
-    "completeness": 0.4,
+    "completeness": 0.3,
     "validity": 0.3,
-    "consistency": 0.3
+    "consistency": 0.2,
+    "uniqueness": 0.2
 }
 
-# Pattern recognition thresholds
+# Pattern detection thresholds
 PATTERN_THRESHOLDS = {
-    "min_pattern_frequency": 0.1,  # Minimum frequency to consider a pattern
-    "max_unique_ratio": 0.9,       # Maximum unique ratio for categorical data
-    "min_date_range_days": 30      # Minimum date range for temporal analysis
+    "email": 0.9,      # 90% match for email pattern
+    "phone": 0.8,      # 80% match for phone pattern
+    "url": 0.9,        # 90% match for URL pattern
+    "date": 0.9,       # 90% match for date pattern
+    "time": 0.9,       # 90% match for time pattern
+    "ip": 0.95,        # 95% match for IP pattern
+    "uuid": 0.95       # 95% match for UUID pattern
 }
 
-# Data type inference rules
-TYPE_INFERENCE_RULES = {
-    "numeric": {
-        "integer": {
-            "patterns": [r"^\d+$"],
-            "min_match_ratio": 0.95
-        },
-        "decimal": {
-            "patterns": [r"^\d*\.\d+$"],
-            "min_match_ratio": 0.95
-        }
-    },
-    "temporal": {
-        "date": {
-            "patterns": [
-                r"^\d{4}-\d{2}-\d{2}$",
-                r"^\d{2}/\d{2}/\d{4}$"
-            ],
-            "min_match_ratio": 0.95
-        },
-        "timestamp": {
-            "patterns": [
-                r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$"
-            ],
-            "min_match_ratio": 0.95
-        }
-    },
-    "string": {
-        "email": {
-            "patterns": [r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"],
-            "min_match_ratio": 0.95
-        },
-        "phone": {
-            "patterns": [r"^\+?[\d\-\(\)]+$"],
-            "min_match_ratio": 0.95
-        },
-        "url": {
-            "patterns": [r"^https?://\S+$"],
-            "min_match_ratio": 0.95
-        }
-    }
-}
-
-# Statistical analysis thresholds
+# Statistical thresholds
 STATISTICAL_THRESHOLDS = {
-    "outlier_zscore": 3.0,        # Z-score threshold for outliers
-    "normal_skewness": 0.5,       # Maximum skewness for normal distribution
-    "normal_kurtosis": 0.5,       # Maximum kurtosis for normal distribution
-    "min_samples": 30             # Minimum samples for statistical analysis
+    "outlier_zscore": 3.0,     # Z-score for outlier detection
+    "normal_skewness": 0.5,    # Max absolute skewness for normal distribution
+    "normal_kurtosis": 0.5,    # Max absolute kurtosis for normal distribution
+    "correlation": 0.7         # Min correlation coefficient for strong relationship
 }
 
-# Column relationship rules
-RELATIONSHIP_RULES = {
-    "key": {
-        "unique_ratio": 0.95,
-        "null_ratio": 0.05,
-        "patterns": [r"_id$", r"^id_", r"_key$"]
+# Type inference rules
+TYPE_INFERENCE_RULES = {
+    "integer": {
+        "pattern": r"^\d+$",
+        "min_match": 0.9
     },
-    "foreign_key": {
-        "unique_ratio": 0.1,
-        "null_ratio": 0.1,
-        "patterns": [r"_id$", r"_fk$"]
+    "float": {
+        "pattern": r"^-?\d*\.?\d+$",
+        "min_match": 0.9
     },
-    "categorical": {
-        "unique_ratio": 0.1,
-        "min_occurrences": 5
+    "date": {
+        "pattern": r"^\d{4}-\d{2}-\d{2}$",
+        "min_match": 0.9
+    },
+    "datetime": {
+        "pattern": r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}",
+        "min_match": 0.9
+    },
+    "boolean": {
+        "values": ["true", "false", "0", "1", "yes", "no"],
+        "min_match": 0.9
+    },
+    "email": {
+        "pattern": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
+        "min_match": 0.9
     }
 }
 
-def get_quality_score(metrics: Dict[str, float]) -> float:
+# Relationship rules
+RELATIONSHIP_RULES = {
+    "one_to_one": {
+        "unique_ratio_min": 0.95,
+        "null_ratio_max": 0.05
+    },
+    "one_to_many": {
+        "unique_ratio_min": 0.1,
+        "null_ratio_max": 0.1
+    },
+    "many_to_one": {
+        "unique_ratio_max": 0.1,
+        "null_ratio_max": 0.1
+    }
+}
+
+def get_quality_score(
+    metric_scores: Dict[str, float]
+) -> float:
     """Calculate overall quality score."""
-    score = 0.0
-    for metric, weight in QUALITY_WEIGHTS.items():
-        if metric in metrics:
-            score += metrics[metric] * weight
-    return score
+    weighted_score = sum(
+        score * QUALITY_WEIGHTS[metric]
+        for metric, score in metric_scores.items()
+        if metric in QUALITY_WEIGHTS
+    )
+    
+    return min(weighted_score, 1.0)
 
 def get_type_confidence(
-    pattern_matches: Dict[str, int],
-    total_count: int,
-    type_rules: Dict[str, Any]
+    value: str,
+    inferred_type: str
 ) -> float:
-    """Calculate confidence for type inference."""
-    if total_count == 0:
+    """Get confidence score for type inference."""
+    if inferred_type not in TYPE_INFERENCE_RULES:
         return 0.0
-        
-    matched_count = sum(pattern_matches.values())
-    match_ratio = matched_count / total_count
     
-    return match_ratio if match_ratio >= type_rules["min_match_ratio"] else 0.0
+    rule = TYPE_INFERENCE_RULES[inferred_type]
+    value_lower = str(value).lower()
+    
+    if "pattern" in rule:
+        return 1.0 if re.match(rule["pattern"], value) else 0.0
+    elif "values" in rule:
+        return 1.0 if value_lower in rule["values"] else 0.0
+    
+    return 0.0
 
 def check_relationship_type(
-    profile: Dict[str, Any],
-    relationship_type: str
-) -> bool:
-    """Check if column matches a relationship type."""
-    rules = RELATIONSHIP_RULES[relationship_type]
+    unique_ratio: float,
+    null_ratio: float
+) -> Optional[str]:
+    """Determine relationship type based on ratios."""
+    for rel_type, rules in RELATIONSHIP_RULES.items():
+        if rel_type == "one_to_one":
+            if (
+                unique_ratio >= rules["unique_ratio_min"] and
+                null_ratio <= rules["null_ratio_max"]
+            ):
+                return rel_type
+        elif rel_type == "one_to_many":
+            if (
+                unique_ratio >= rules["unique_ratio_min"] and
+                null_ratio <= rules["null_ratio_max"]
+            ):
+                return rel_type
+        elif rel_type == "many_to_one":
+            if (
+                unique_ratio <= rules["unique_ratio_max"] and
+                null_ratio <= rules["null_ratio_max"]
+            ):
+                return rel_type
     
-    # Check unique ratio
-    if "unique_ratio" in rules:
-        actual_ratio = profile["statistics"]["unique_ratio"]
-        if actual_ratio < rules["unique_ratio"]:
-            return False
-    
-    # Check null ratio
-    if "null_ratio" in rules:
-        null_ratio = profile["statistics"]["null_count"] / profile["statistics"]["count"]
-        if null_ratio > rules["null_ratio"]:
-            return False
-    
-    # Check patterns
-    if "patterns" in rules:
-        name = profile["name"].lower()
-        if not any(re.search(pattern, name) for pattern in rules["patterns"]):
-            return False
-    
-    # Check categorical criteria
-    if relationship_type == "categorical":
-        unique_count = profile["statistics"]["unique_count"]
-        if unique_count < rules["min_occurrences"]:
-            return False
-    
-    return True
+    return None
 
-def suggest_column_type(profile: Dict[str, Any]) -> Dict[str, float]:
-    """Suggest data type with confidence scores."""
-    suggestions = {}
+def suggest_column_type(
+    sample_values: List[str]
+) -> Dict[str, Any]:
+    """Suggest column type based on sample values."""
+    if not sample_values:
+        return {
+            "suggested_type": "unknown",
+            "confidence": 0.0
+        }
     
-    # Check each type category
-    for category, types in TYPE_INFERENCE_RULES.items():
-        for type_name, rules in types.items():
-            pattern_matches = {}
-            
-            # Check each pattern
-            for pattern in rules["patterns"]:
-                matches = sum(1 for value in profile["sample_values"]
-                            if re.match(pattern, str(value)))
-                if matches > 0:
-                    pattern_matches[pattern] = matches
-            
-            # Calculate confidence
-            if pattern_matches:
-                confidence = get_type_confidence(
-                    pattern_matches,
-                    profile["statistics"]["count"],
-                    rules
-                )
-                if confidence > 0:
-                    suggestions[type_name] = confidence
+    type_matches = {
+        t: 0 for t in TYPE_INFERENCE_RULES
+    }
+    total_values = len([v for v in sample_values if v])
     
-    return suggestions 
+    if total_values == 0:
+        return {
+            "suggested_type": "unknown",
+            "confidence": 0.0
+        }
+    
+    # Check each value against each type
+    for value in sample_values:
+        if not value:
+            continue
+            
+        for type_name, rule in TYPE_INFERENCE_RULES.items():
+            confidence = get_type_confidence(value, type_name)
+            if confidence > 0:
+                type_matches[type_name] += 1
+    
+    # Calculate match ratios
+    type_ratios = {
+        t: matches / total_values
+        for t, matches in type_matches.items()
+    }
+    
+    # Find best match
+    best_type = max(
+        type_ratios.items(),
+        key=lambda x: x[1]
+    )
+    
+    if best_type[1] >= TYPE_INFERENCE_RULES[best_type[0]]["min_match"]:
+        return {
+            "suggested_type": best_type[0],
+            "confidence": best_type[1]
+        }
+    
+    return {
+        "suggested_type": "string",
+        "confidence": 1.0
+    } 

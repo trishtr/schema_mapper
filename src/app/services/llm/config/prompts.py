@@ -1,114 +1,167 @@
 """
-Prompt templates for LLM interactions.
+Configuration for LLM prompts and response parsing.
 """
-from typing import Dict, Any
+from typing import Dict, Any, List
+import json
+import re
 
 def generate_mapping_prompt(
     source_column: Dict[str, Any],
     target_column: Dict[str, Any],
     current_mapping: Dict[str, Any]
 ) -> str:
-    """Generate prompt for analyzing column mapping."""
-    prompt = f"""
-Analyze the following database column mapping:
+    """Generate prompt for mapping analysis."""
+    return f"""Analyze the following schema mapping:
 
 Source Column:
 - Name: {source_column['name']}
 - Data Type: {source_column['data_type']}
-- Sample Values: {', '.join(source_column.get('sample_values', [])[:3])}
+- Sample Values: {source_column.get('sample_values', [])}
 
 Target Column:
-- Name: {target_column['name']}
+- Name: {target_column['column_name']}
 - Data Type: {target_column['data_type']}
-- Sample Values: {', '.join(target_column.get('sample_values', [])[:3])}
+- Sample Values: {target_column.get('sample_values', [])}
 
-Current Mapping Analysis:
-- Confidence Score: {current_mapping['confidence_score']}
-- Similarity Score: {current_mapping['similarity_score']}
-- Rule Score: {current_mapping['rule_score']}
-- Compatible Types: {', '.join(current_mapping['compatible_types'])}
+Current Mapping:
+- Rule Results: {current_mapping['rule_results']}
+- Matches: {current_mapping['matches']}
 
 Please analyze this mapping and provide:
-1. Whether this mapping is valid
-2. Confidence score (0.0-1.0)
-3. Explanation of your reasoning
-4. Any potential data transformation needed
+1. Confidence score (0.0 to 1.0)
+2. Explanation of the mapping
+3. Any necessary transformations
+4. Validation rules to apply
 
-Format your response as JSON:
-{{
-    "is_valid": boolean,
+Respond in JSON format:
+{
     "confidence": float,
     "explanation": string,
-    "transformations": [string]
-}}
+    "transformations": list,
+    "validation_rules": list
+}
 """
-    return prompt
 
-def generate_validation_prompt(mapping_result: Dict[str, Any]) -> str:
-    """Generate prompt for validating mapping result."""
-    prompt = f"""
-Validate the following schema mapping result:
+def generate_validation_prompt(
+    mapping_result: Dict[str, Any]
+) -> str:
+    """Generate prompt for mapping validation."""
+    return f"""Validate the following mapping result:
 
-Source Column: {mapping_result['source_column']}
-Target Column: {mapping_result['target_column']}
-Confidence Score: {mapping_result['confidence_score']}
-Compatible Types: {', '.join(mapping_result['compatible_types'])}
+Mapping:
+{json.dumps(mapping_result, indent=2)}
 
-Additional Context:
-- Semantic Relationships: {mapping_result.get('semantic_relationships', {})}
-- Rule Analysis: {mapping_result.get('rule_score', 'N/A')}
+Please validate:
+1. Data type compatibility
+2. Value format consistency
+3. Business rule compliance
+4. Transformation feasibility
 
-Please validate this mapping and provide:
-1. Whether the mapping is valid
-2. Any warnings or potential issues
-3. Any errors that should prevent this mapping
-4. Suggested improvements
-
-Format your response as JSON:
-{{
+Respond in JSON format:
+{
     "is_valid": boolean,
-    "warnings": [string],
-    "errors": [string],
-    "suggestions": [string]
-}}
+    "validation_score": float,
+    "issues": list,
+    "recommendations": list
+}
 """
-    return prompt
 
 def parse_llm_response(response: str) -> Dict[str, Any]:
     """Parse LLM response into structured format."""
     try:
-        # Basic cleanup
+        # Clean response
         response = response.strip()
+        
+        # Extract JSON if wrapped in code blocks
         if response.startswith("```json"):
             response = response[7:]
         if response.endswith("```"):
             response = response[:-3]
-            
+        
         # Parse JSON
-        import json
         result = json.loads(response)
+        
+        # Validate required fields
+        if "confidence" in result:
+            result["confidence"] = float(result["confidence"])
+            if not 0 <= result["confidence"] <= 1:
+                raise ValueError("Confidence must be between 0 and 1")
         
         return result
         
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON format: {str(e)}")
     except Exception as e:
-        raise ValueError(f"Failed to parse LLM response: {str(e)}")
+        raise ValueError(f"Failed to parse response: {str(e)}")
 
-def validate_mapping_result(result: Dict[str, Any]) -> bool:
+def validate_mapping_result(
+    result: Dict[str, Any]
+) -> bool:
     """Validate mapping result structure."""
     required_fields = {
-        "analyze": ["is_valid", "confidence", "explanation"],
-        "validate": ["is_valid", "warnings", "errors"]
+        "confidence": float,
+        "explanation": str,
+        "transformations": list
     }
     
-    # Check result type
-    if "explanation" in result:
-        fields = required_fields["analyze"]
-    else:
-        fields = required_fields["validate"]
-    
-    # Validate fields
-    for field in fields:
-        if field not in result:
+    try:
+        # Check required fields
+        for field, field_type in required_fields.items():
+            if field not in result:
+                return False
+            if not isinstance(result[field], field_type):
+                return False
+        
+        # Validate confidence range
+        if not 0 <= result["confidence"] <= 1:
             return False
-            
-    return True 
+        
+        # Validate explanation
+        if not result["explanation"].strip():
+            return False
+        
+        return True
+        
+    except Exception:
+        return False
+
+def extract_transformations(
+    explanation: str
+) -> List[str]:
+    """Extract transformations from explanation text."""
+    transformations = []
+    
+    # Look for transformation keywords
+    keywords = [
+        "convert",
+        "transform",
+        "format",
+        "change",
+        "modify",
+        "replace"
+    ]
+    
+    # Split into sentences
+    sentences = re.split(r'[.!?]+', explanation)
+    
+    for sentence in sentences:
+        sentence = sentence.strip().lower()
+        if any(keyword in sentence for keyword in keywords):
+            transformations.append(sentence)
+    
+    return transformations
+
+def format_llm_result(
+    result: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Format LLM result for API response."""
+    return {
+        "confidence": result.get("confidence", 0.0),
+        "explanation": result.get("explanation", ""),
+        "transformations": result.get("transformations", []),
+        "validation": {
+            "is_valid": result.get("is_valid", False),
+            "issues": result.get("issues", []),
+            "recommendations": result.get("recommendations", [])
+        }
+    } 
