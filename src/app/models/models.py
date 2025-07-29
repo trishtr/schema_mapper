@@ -78,4 +78,24 @@ class LLMResponse(BaseModel):
     confidence: float
     explanation: str
     transformations: Optional[List[str]] = None
-    warnings: Optional[List[str]] = None 
+    warnings: Optional[List[str]] = None
+
+class ColumnProfile(BaseModel):
+    """Profile for a data column."""
+    name: str
+    data_type: str
+    statistics: Dict[str, Any]
+    quality: Dict[str, Any]
+    patterns: Optional[Dict[str, Any]] = None
+    relationships: Optional[Dict[str, Any]] = None
+    sample_size: Optional[int] = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+class ProfileRequest(BaseModel):
+    """Request for profiling columns."""
+    columns: List[Dict[str, Any]]
+
+class ProfileResponse(BaseModel):
+    """Response for profiling columns."""
+    profiles: List[ColumnProfile]
+    timestamp: datetime = Field(default_factory=datetime.utcnow) 
