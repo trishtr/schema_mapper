@@ -1,510 +1,295 @@
 """
-Data profiling service for analyzing source and target data.
+Service for analyzing and profiling data columns.
 """
 from typing import Dict, List, Any, Optional
-import pandas as pd
 import numpy as np
+import pandas as pd
 from datetime import datetime
 import re
 import logging
-from collections import Counter
 
-class DataProfiler:
-    """Service for profiling database columns and tables."""
+from src.app.utils.error_handling import ProfilerError
+from .config.profiling_rules import (
+    get_quality_score,
+    get_type_confidence,
+    check_relationship_type,
+    suggest_column_type,
+    THRESHOLDS,
+    QUALITY_WEIGHTS,
+    PATTERN_THRESHOLDS
+)
+
+class ProfilerService:
+    """Service for data profiling and analysis."""
     
     def __init__(self):
-        self.numeric_types = ["INTEGER", "FLOAT", "DECIMAL", "NUMERIC"]
-        self.string_types = ["VARCHAR", "TEXT", "CHAR", "STRING"]
-        self.date_types = ["DATE", "TIMESTAMP", "DATETIME"]
-        
+        self.profile_cache = {}
+    
     async def profile_column(
         self,
-        column_data: List[Any],
-        column_info: Dict[str, Any]
+        column_name: str,
+        data_type: str,
+        sample_values: List[Any]
     ) -> Dict[str, Any]:
-        """Profile a single database column."""
+        """Profile a data column."""
         try:
             # Convert to pandas series for analysis
-            series = pd.Series(column_data)
-            data_type = column_info["data_type"].upper()
+            series = pd.Series(sample_values)
             
             profile = {
-                "name": column_info["name"],
+                "name": column_name,
                 "data_type": data_type,
-                "statistics": self._get_basic_stats(series, data_type),
-                "patterns": self._analyze_patterns(series, data_type),
-                "quality": self._assess_data_quality(series),
+                "sample_size": len(sample_values),
                 "timestamp": datetime.utcnow().isoformat()
             }
             
-            # Add type-specific analysis
-            if data_type in self.numeric_types:
-                profile.update(self._analyze_numeric(series))
-            elif data_type in self.string_types:
-                profile.update(self._analyze_string(series))
-            elif data_type in self.date_types:
-                profile.update(self._analyze_date(series))
+            # Basic statistics
+            profile.update(self._analyze_basic_stats(series))
+            
+            # Type-specific analysis
+            if np.issubdtype(series.dtype, np.number):
+                profile.update(await self._analyze_numeric(series))
+            elif series.dtype == 'object':
+                profile.update(await self._analyze_string(series))
+            elif pd.api.types.is_datetime64_any_dtype(series):
+                profile.update(await self._analyze_temporal(series))
+            
+            # Data quality assessment
+            profile["quality"] = await self._assess_data_quality(series)
+            
+            # Pattern detection
+            profile["patterns"] = await self._detect_value_patterns(series)
+            
+            # Relationship detection
+            profile["relationships"] = await self._detect_relationships(
+                column_name,
+                series
+            )
+            
+            # Cache profile
+            self.profile_cache[column_name] = profile
             
             return profile
             
         except Exception as e:
             logging.error(f"Column profiling failed: {str(e)}")
-            raise ValueError(f"Failed to profile column: {str(e)}")
+            raise ProfilerError(
+                f"Failed to profile column {column_name}",
+                details={"error": str(e)}
+            )
     
-    def _get_basic_stats(
+    def _analyze_basic_stats(
         self,
-        series: pd.Series,
-        data_type: str
+        series: pd.Series
     ) -> Dict[str, Any]:
-        """Get basic statistics for a column."""
-        stats = {
+        """Analyze basic statistics."""
+        return {
             "count": len(series),
-            "null_count": series.isnull().sum(),
             "unique_count": series.nunique(),
-            "unique_ratio": series.nunique() / len(series) if len(series) > 0 else 0
+            "null_count": series.isnull().sum(),
+            "unique_ratio": series.nunique() / len(series),
+            "null_ratio": series.isnull().sum() / len(series)
+        }
+    
+    async def _analyze_numeric(
+        self,
+        series: pd.Series
+    ) -> Dict[str, Any]:
+        """Analyze numeric column."""
+        stats = {
+            "min": float(series.min()),
+            "max": float(series.max()),
+            "mean": float(series.mean()),
+            "median": float(series.median()),
+            "std": float(series.std()),
+            "quartiles": {
+                "q1": float(series.quantile(0.25)),
+                "q2": float(series.quantile(0.50)),
+                "q3": float(series.quantile(0.75))
+            }
         }
         
-        # Add numeric statistics if applicable
-        if data_type in self.numeric_types:
-            numeric_series = pd.to_numeric(series, errors='coerce')
-            stats.update({
-                "min": numeric_series.min(),
-                "max": numeric_series.max(),
-                "mean": numeric_series.mean(),
-                "median": numeric_series.median(),
-                "std": numeric_series.std()
-            })
+        # Detect outliers
+        q1 = stats["quartiles"]["q1"]
+        q3 = stats["quartiles"]["q3"]
+        iqr = q3 - q1
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
+        
+        outliers = series[
+            (series < lower_bound) | (series > upper_bound)
+        ]
+        
+        stats["outliers"] = {
+            "count": len(outliers),
+            "ratio": len(outliers) / len(series),
+            "bounds": {
+                "lower": float(lower_bound),
+                "upper": float(upper_bound)
+            }
+        }
         
         return stats
     
-    def _analyze_patterns(
+    async def _analyze_string(
         self,
-        series: pd.Series,
-        data_type: str
+        series: pd.Series
     ) -> Dict[str, Any]:
-        """Analyze data patterns in the column."""
-        patterns = {
-            "common_prefixes": self._get_common_patterns(series, "prefix"),
-            "common_suffixes": self._get_common_patterns(series, "suffix"),
-            "format_consistency": self._check_format_consistency(series, data_type)
-        }
+        """Analyze string column."""
+        # Remove null values
+        series = series.dropna()
         
-        # Add value patterns
-        value_patterns = self._detect_value_patterns(series)
-        if value_patterns:
-            patterns["value_patterns"] = value_patterns
-        
-        return patterns
-    
-    def _assess_data_quality(self, series: pd.Series) -> Dict[str, Any]:
-        """Assess data quality metrics."""
-        total_count = len(series)
-        if total_count == 0:
-            return {
-                "completeness": 0,
-                "validity": 0,
-                "consistency": 0
-            }
-            
-        # Calculate quality metrics
-        null_count = series.isnull().sum()
-        empty_count = series.astype(str).str.strip().eq('').sum()
-        
-        # Basic pattern consistency check
-        consistent_format = self._check_value_consistency(series)
-        
-        return {
-            "completeness": (total_count - null_count - empty_count) / total_count,
-            "validity": self._check_data_validity(series),
-            "consistency": consistent_format
-        }
-    
-    def _analyze_numeric(self, series: pd.Series) -> Dict[str, Any]:
-        """Analyze numeric column characteristics."""
-        numeric_series = pd.to_numeric(series, errors='coerce')
-        
-        analysis = {
-            "distribution": {
-                "skewness": numeric_series.skew(),
-                "kurtosis": numeric_series.kurtosis(),
-                "is_normal": self._test_normality(numeric_series)
-            },
-            "ranges": self._get_numeric_ranges(numeric_series),
-            "outliers": self._detect_outliers(numeric_series)
-        }
-        
-        # Detect potential categorical numeric values
-        if numeric_series.nunique() < 20:
-            analysis["value_counts"] = numeric_series.value_counts().to_dict()
-            
-        return analysis
-    
-    def _analyze_string(self, series: pd.Series) -> Dict[str, Any]:
-        """Analyze string column characteristics."""
-        str_series = series.astype(str)
-        
-        return {
+        stats = {
             "length_stats": {
-                "min_length": str_series.str.len().min(),
-                "max_length": str_series.str.len().max(),
-                "mean_length": str_series.str.len().mean()
+                "min": min(series.str.len()),
+                "max": max(series.str.len()),
+                "mean": float(series.str.len().mean()),
+                "median": float(series.str.len().median())
             },
-            "character_types": self._analyze_character_types(str_series),
-            "common_patterns": self._detect_string_patterns(str_series),
-            "potential_types": self._suggest_semantic_types(str_series)
-        }
-    
-    def _analyze_date(self, series: pd.Series) -> Dict[str, Any]:
-        """Analyze date/timestamp column characteristics."""
-        # Convert to datetime
-        date_series = pd.to_datetime(series, errors='coerce')
-        
-        return {
-            "temporal_range": {
-                "min_date": date_series.min(),
-                "max_date": date_series.max(),
-                "range_days": (date_series.max() - date_series.min()).days
-            },
-            "patterns": {
-                "weekday_distribution": date_series.dt.dayofweek.value_counts().to_dict(),
-                "month_distribution": date_series.dt.month.value_counts().to_dict(),
-                "year_distribution": date_series.dt.year.value_counts().to_dict()
-            },
-            "format_analysis": self._analyze_date_formats(series)
-        }
-    
-    def _get_common_patterns(
-        self,
-        series: pd.Series,
-        pattern_type: str,
-        min_length: int = 2
-    ) -> List[Dict[str, Any]]:
-        """Get common prefixes or suffixes."""
-        patterns = []
-        str_series = series.astype(str)
-        
-        if pattern_type == "prefix":
-            pattern_func = lambda x: x[:min_length]
-        else:  # suffix
-            pattern_func = lambda x: x[-min_length:]
-            
-        pattern_counts = Counter(str_series.apply(pattern_func))
-        
-        # Get patterns that appear more than once
-        for pattern, count in pattern_counts.most_common(5):
-            if count > 1:
-                patterns.append({
-                    "pattern": pattern,
-                    "count": count,
-                    "frequency": count / len(series)
-                })
-                
-        return patterns
-    
-    def _check_format_consistency(
-        self,
-        series: pd.Series,
-        data_type: str
-    ) -> float:
-        """Check format consistency of values."""
-        if len(series) == 0:
-            return 1.0
-            
-        if data_type in self.numeric_types:
-            # Check decimal places consistency
-            decimal_places = series.astype(str).str.extract(r'\.(\d+)')[0].str.len()
-            return 1.0 - (decimal_places.nunique() / len(series))
-            
-        elif data_type in self.string_types:
-            # Check character type consistency
-            patterns = series.astype(str).apply(self._get_char_pattern)
-            return len(patterns.unique()) / len(series)
-            
-        return 1.0
-    
-    def _detect_value_patterns(self, series: pd.Series) -> List[Dict[str, Any]]:
-        """Detect common value patterns."""
-        patterns = []
-        str_series = series.astype(str)
-        
-        # Common regex patterns
-        pattern_checks = {
-            "email": r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
-            "phone": r'^\+?[\d\-\(\)]+$',
-            "url": r'^https?://\S+$',
-            "zipcode": r'^\d{5}(-\d{4})?$',
-            "date_iso": r'^\d{4}-\d{2}-\d{2}',
-            "numeric": r'^-?\d*\.?\d+$'
-        }
-        
-        for pattern_name, regex in pattern_checks.items():
-            matches = str_series.str.match(regex, na=False)
-            match_count = matches.sum()
-            
-            if match_count > 0:
-                patterns.append({
-                    "pattern_type": pattern_name,
-                    "match_count": int(match_count),
-                    "match_ratio": match_count / len(series)
-                })
-                
-        return patterns
-    
-    def _check_value_consistency(self, series: pd.Series) -> float:
-        """Check value format consistency."""
-        if len(series) == 0:
-            return 1.0
-            
-        # Get value patterns
-        patterns = series.astype(str).apply(self._get_value_pattern)
-        
-        # Calculate consistency ratio
-        dominant_pattern = patterns.mode()[0]
-        consistency = (patterns == dominant_pattern).sum() / len(series)
-        
-        return consistency
-    
-    def _check_data_validity(self, series: pd.Series) -> float:
-        """Check data validity based on type-specific rules."""
-        if len(series) == 0:
-            return 1.0
-            
-        valid_count = len(series)
-        
-        # Remove null values from count
-        valid_count -= series.isnull().sum()
-        
-        # Remove empty strings
-        valid_count -= series.astype(str).str.strip().eq('').sum()
-        
-        # Calculate validity ratio
-        return valid_count / len(series)
-    
-    def _test_normality(self, series: pd.Series) -> bool:
-        """Test if numeric data follows normal distribution."""
-        if len(series) < 8:  # Not enough data
-            return False
-            
-        # Use skewness and kurtosis test
-        skewness = abs(series.skew())
-        kurtosis = abs(series.kurtosis())
-        
-        # Values close to 0 indicate normal distribution
-        return skewness < 0.5 and kurtosis < 0.5
-    
-    def _get_numeric_ranges(
-        self,
-        series: pd.Series
-    ) -> List[Dict[str, Any]]:
-        """Get value ranges for numeric data."""
-        if len(series) == 0:
-            return []
-            
-        # Calculate quartiles
-        q1 = series.quantile(0.25)
-        q2 = series.quantile(0.50)
-        q3 = series.quantile(0.75)
-        iqr = q3 - q1
-        
-        return [
-            {
-                "range": "low",
-                "min": series.min(),
-                "max": q1,
-                "count": len(series[series <= q1])
-            },
-            {
-                "range": "mid",
-                "min": q1,
-                "max": q3,
-                "count": len(series[(series > q1) & (series <= q3)])
-            },
-            {
-                "range": "high",
-                "min": q3,
-                "max": series.max(),
-                "count": len(series[series > q3])
+            "case_stats": {
+                "upper": sum(series.str.isupper()) / len(series),
+                "lower": sum(series.str.islower()) / len(series),
+                "mixed": sum(~(series.str.isupper() | series.str.islower())) / len(series)
             }
-        ]
+        }
+        
+        # Character type analysis
+        stats["char_types"] = {
+            "alpha": sum(series.str.isalpha()) / len(series),
+            "numeric": sum(series.str.isnumeric()) / len(series),
+            "alphanumeric": sum(series.str.isalnum()) / len(series),
+            "spaces": sum(series.str.contains(r"\s")) / len(series),
+            "special": sum(series.str.contains(r"[^a-zA-Z0-9\s]")) / len(series)
+        }
+        
+        return stats
     
-    def _detect_outliers(
+    async def _analyze_temporal(
         self,
         series: pd.Series
     ) -> Dict[str, Any]:
-        """Detect outliers in numeric data."""
-        if len(series) < 4:  # Not enough data
-            return {"count": 0, "values": []}
-            
-        # Calculate IQR
-        q1 = series.quantile(0.25)
-        q3 = series.quantile(0.75)
-        iqr = q3 - q1
-        
-        # Define bounds
-        lower_bound = q1 - (1.5 * iqr)
-        upper_bound = q3 + (1.5 * iqr)
-        
-        # Find outliers
-        outliers = series[(series < lower_bound) | (series > upper_bound)]
-        
-        return {
-            "count": len(outliers),
-            "values": outliers.tolist()[:5],  # First 5 outliers
-            "bounds": {
-                "lower": lower_bound,
-                "upper": upper_bound
-            }
+        """Analyze temporal column."""
+        stats = {
+            "min_date": series.min().isoformat(),
+            "max_date": series.max().isoformat(),
+            "range_days": (series.max() - series.min()).days
         }
+        
+        # Distribution analysis
+        stats["distribution"] = {
+            "year": series.dt.year.value_counts().to_dict(),
+            "month": series.dt.month.value_counts().to_dict(),
+            "weekday": series.dt.dayofweek.value_counts().to_dict()
+        }
+        
+        # Format detection
+        sample = series.iloc[0]
+        stats["format"] = {
+            "has_time": bool(sample.time()),
+            "has_timezone": bool(sample.tzinfo),
+            "resolution": "seconds" if sample.second else "minutes" if sample.minute else "hours" if sample.hour else "days"
+        }
+        
+        return stats
     
-    def _analyze_character_types(
+    async def _assess_data_quality(
         self,
         series: pd.Series
-    ) -> Dict[str, float]:
-        """Analyze character type distributions."""
-        if len(series) == 0:
-            return {}
-            
-        total_chars = series.str.len().sum()
-        if total_chars == 0:
-            return {}
-            
-        char_counts = {
-            "alphabetic": series.str.count(r'[a-zA-Z]').sum(),
-            "numeric": series.str.count(r'[0-9]').sum(),
-            "special": series.str.count(r'[^a-zA-Z0-9\s]').sum(),
-            "whitespace": series.str.count(r'\s').sum()
+    ) -> Dict[str, Any]:
+        """Assess data quality metrics."""
+        quality = {
+            "completeness": 1 - (series.isnull().sum() / len(series)),
+            "validity": 0.0,
+            "consistency": 0.0,
+            "uniqueness": series.nunique() / len(series)
         }
         
-        # Calculate proportions
-        return {
-            k: v / total_chars
-            for k, v in char_counts.items()
-        }
-    
-    def _detect_string_patterns(
-        self,
-        series: pd.Series
-    ) -> List[Dict[str, Any]]:
-        """Detect common string patterns."""
-        patterns = []
+        # Validity check
+        if np.issubdtype(series.dtype, np.number):
+            quality["validity"] = 1.0
+        else:
+            # Check string patterns
+            valid_pattern = re.compile(r"^[\w\s\-\.@]+$")
+            quality["validity"] = sum(
+                series.dropna().astype(str).str.match(valid_pattern)
+            ) / len(series)
         
-        # Common string patterns
-        pattern_checks = {
-            "all_caps": lambda x: x.isupper(),
-            "all_lower": lambda x: x.islower(),
-            "title_case": lambda x: x.istitle(),
-            "contains_spaces": lambda x: ' ' in x,
-            "alphanumeric": lambda x: x.isalnum(),
-            "numeric_only": lambda x: x.isdigit()
-        }
+        # Consistency check
+        if len(series) > 1:
+            # Check value patterns
+            first_value = str(series.iloc[0])
+            pattern = re.compile(
+                r"[A-Za-z]" if first_value.isalpha()
+                else r"\d" if first_value.isdigit()
+                else r"."
+            )
+            quality["consistency"] = sum(
+                series.dropna().astype(str).str.match(pattern)
+            ) / len(series)
         
-        for pattern_name, check_func in pattern_checks.items():
-            matches = series.apply(check_func)
-            match_count = matches.sum()
-            
-            if match_count > 0:
-                patterns.append({
-                    "pattern": pattern_name,
-                    "count": int(match_count),
-                    "ratio": match_count / len(series)
-                })
-                
-        return patterns
-    
-    def _suggest_semantic_types(
-        self,
-        series: pd.Series
-    ) -> List[Dict[str, float]]:
-        """Suggest potential semantic types."""
-        suggestions = []
-        
-        # Common semantic patterns
-        semantic_patterns = {
-            "email": r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
-            "url": r'^https?://\S+$',
-            "phone": r'^\+?[\d\-\(\)]+$',
-            "date": r'^\d{4}-\d{2}-\d{2}',
-            "time": r'^\d{2}:\d{2}(:\d{2})?$',
-            "ip_address": r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$',
-            "credit_card": r'^\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}$'
-        }
-        
-        for type_name, pattern in semantic_patterns.items():
-            matches = series.str.match(pattern, na=False)
-            match_ratio = matches.sum() / len(series)
-            
-            if match_ratio > 0.1:  # At least 10% match
-                suggestions.append({
-                    "type": type_name,
-                    "confidence": match_ratio
-                })
-                
-        return sorted(
-            suggestions,
-            key=lambda x: x["confidence"],
-            reverse=True
+        # Overall score
+        quality["overall_score"] = sum(
+            score * QUALITY_WEIGHTS[metric]
+            for metric, score in quality.items()
+            if metric != "overall_score"
         )
+        
+        return quality
     
-    def _analyze_date_formats(
+    async def _detect_value_patterns(
         self,
         series: pd.Series
     ) -> Dict[str, Any]:
-        """Analyze date string formats."""
-        formats = Counter()
-        
-        # Common date formats to check
-        date_patterns = {
-            "ISO": r'^\d{4}-\d{2}-\d{2}',
-            "US": r'^\d{2}/\d{2}/\d{4}',
-            "EU": r'^\d{2}\.\d{2}\.\d{4}',
-            "TIMESTAMP": r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}'
+        """Detect patterns in values."""
+        patterns = {
+            "email": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
+            "phone": r"^\+?1?\d{9,15}$",
+            "url": r"^https?://[\w\-\.]+(:\d+)?(/[\w\-\./?%&=]*)?$",
+            "date": r"^\d{4}-\d{2}-\d{2}$",
+            "time": r"^\d{2}:\d{2}(:\d{2})?$",
+            "ip": r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$",
+            "uuid": r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
         }
         
-        for format_name, pattern in date_patterns.items():
-            matches = series.astype(str).str.match(pattern, na=False)
-            match_count = matches.sum()
-            
-            if match_count > 0:
-                formats[format_name] = match_count
-                
-        return {
-            "detected_formats": {
-                format_name: {
-                    "count": count,
-                    "ratio": count / len(series)
-                }
-                for format_name, count in formats.most_common()
-            },
-            "consistency": len(formats) == 1  # True if only one format detected
-        }
-    
-    def _get_char_pattern(self, value: str) -> str:
-        """Get character pattern for a string."""
-        if pd.isna(value):
-            return "NA"
-            
-        pattern = ""
-        for char in str(value):
-            if char.isupper():
-                pattern += "A"
-            elif char.islower():
-                pattern += "a"
-            elif char.isdigit():
-                pattern += "9"
-            else:
-                pattern += char
-                
-        return pattern
-    
-    def _get_value_pattern(self, value: str) -> str:
-        """Get general pattern for a value."""
-        if pd.isna(value):
-            return "NA"
-            
-        # Replace character sequences with pattern
-        pattern = str(value)
-        pattern = re.sub(r'[A-Z]+', 'A', pattern)
-        pattern = re.sub(r'[a-z]+', 'a', pattern)
-        pattern = re.sub(r'\d+', '9', pattern)
+        results = {}
+        series_str = series.dropna().astype(str)
         
-        return pattern 
+        for pattern_name, pattern in patterns.items():
+            matches = series_str.str.match(pattern)
+            match_ratio = sum(matches) / len(series)
+            
+            if match_ratio >= PATTERN_THRESHOLDS[pattern_name]:
+                results[pattern_name] = match_ratio
+        
+        return results
+    
+    async def _detect_relationships(
+        self,
+        column_name: str,
+        series: pd.Series
+    ) -> Dict[str, Any]:
+        """Detect potential relationships."""
+        relationships = {
+            "type": check_relationship_type(column_name),
+            "cardinality": "unknown",
+            "suggested_references": []
+        }
+        
+        # Detect cardinality
+        unique_ratio = series.nunique() / len(series)
+        if unique_ratio == 1.0:
+            relationships["cardinality"] = "one_to_one"
+        elif unique_ratio >= 0.9:
+            relationships["cardinality"] = "one_to_many"
+        elif unique_ratio <= 0.1:
+            relationships["cardinality"] = "many_to_one"
+        else:
+            relationships["cardinality"] = "many_to_many"
+        
+        # Suggest references based on name patterns
+        if "_id" in column_name.lower():
+            base_name = column_name.lower().replace("_id", "")
+            relationships["suggested_references"].append(f"{base_name}s")
+            relationships["suggested_references"].append(base_name)
+        
+        return relationships 
