@@ -1,412 +1,440 @@
-# Technical Deep Dive
+# Schema Mapper: Technical Deep Dive
 
-## 1. Embedding Strategy
+## Core Components
 
-### 1.1 Column Text Generation
+### 1. Embedding Generation
+
+The embedding service uses SentenceTransformer to generate semantic representations:
 
 ```python
-def _build_column_text(
+class EmbeddingService:
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+        self.model = SentenceTransformer(model_name)
+        self.chroma_client = chromadb.PersistentClient(
+            path="./chroma_db"
+        )
+```
+
+Key features:
+
+- Model: `all-MiniLM-L6-v2` (384-dimensional embeddings)
+- Vector store: ChromaDB (persistent storage)
+- Rich text generation with business rules
+- Contextual descriptions and semantic relationships
+
+### 2. Vector Search
+
+Vector similarity search using ChromaDB:
+
+```python
+async def find_similar_columns(
+    self,
+    query_embedding: np.ndarray,
+    n_results: int = 5,
+    score_threshold: float = 0.7
+) -> List[Dict[str, Any]]:
+    results = self.collection.query(
+        query_embeddings=[query_embedding],
+        n_results=n_results
+    )
+```
+
+Features:
+
+- Cosine similarity search
+- Configurable thresholds
+- Metadata filtering
+- Batch processing
+
+### 3. Schema Mapping
+
+The schema mapper orchestrates the mapping process:
+
+```python
+async def map_schemas(
+    self,
+    source_columns: List[Dict[str, Any]],
+    target_columns: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    # Get initial mappings
+    initial_mappings = await self.embedding_service.map_schemas_with_embeddings(
+        source_columns,
+        target_columns
+    )
+
+    # Process each mapping
+    for mapping in initial_mappings:
+        processed_mapping = await self._process_column_mapping(
+            mapping,
+            source_columns,
+            target_columns
+        )
+```
+
+Components:
+
+- Initial embedding-based mapping
+- Rule-based processing
+- Confidence scoring
+- LLM integration for complex cases
+
+### 4. Data Profiling
+
+The profiler analyzes column characteristics:
+
+```python
+async def profile_column(
+    self,
     column_name: str,
     data_type: str,
-    sample_values: List[str]
-) -> str:
-    components = [
-        get_field_description(column_name),
-        generate_contextual_description(column_name, data_type, sample_values),
-        f"Data type {data_type} compatible with: {get_compatible_types(data_type)}"
-    ]
-    return " | ".join(components)
-```
-
-### 1.2 Business Rules Integration
-
-```python
-# Healthcare-specific rules
-HEALTHCARE_FIELDS = {
-    "patient_id": "Unique identifier for patient records",
-    "npi": "National Provider Identifier",
-    "icd_code": "International Classification of Diseases code"
-}
-
-# Data type compatibility
-DATA_TYPE_COMPATIBILITY = {
-    "VARCHAR": ["VARCHAR", "TEXT", "CHAR"],
-    "INTEGER": ["INTEGER", "BIGINT", "SMALLINT"]
-}
-```
-
-### 1.3 Vector Store Management
-
-```python
-# ChromaDB configuration
-collection = chroma_client.create_collection(
-    name="schema_embeddings",
-    metadata={"description": "Schema column embeddings"}
-)
-
-# Add embeddings
-collection.add(
-    embeddings=[embedding_vector],
-    documents=[column_text],
-    metadatas=[metadata],
-    ids=[unique_id]
-)
-```
-
-## 2. Data Profiling
-
-### 2.1 Statistical Analysis
-
-```python
-def _analyze_numeric(self, series: pd.Series) -> Dict[str, Any]:
-    return {
-        "distribution": {
-            "skewness": series.skew(),
-            "kurtosis": series.kurtosis(),
-            "is_normal": self._test_normality(series)
-        },
-        "ranges": self._get_numeric_ranges(series),
-        "outliers": self._detect_outliers(series)
-    }
-```
-
-### 2.2 Pattern Detection
-
-```python
-# Common patterns
-pattern_checks = {
-    "email": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
-    "phone": r"^\+?[\d\-\(\)]+$",
-    "url": r"^https?://\S+$",
-    "zipcode": r"^\d{5}(-\d{4})?$"
-}
-
-# Pattern analysis
-matches = series.str.match(pattern, na=False)
-match_ratio = matches.sum() / len(series)
-```
-
-### 2.3 Quality Assessment
-
-```python
-def _assess_data_quality(self, series: pd.Series) -> Dict[str, Any]:
-    return {
-        "completeness": (total - null_count) / total,
-        "validity": self._check_data_validity(series),
-        "consistency": self._check_value_consistency(series)
-    }
-```
-
-## 3. Schema Mapping
-
-### 3.1 Mapping Process
-
-```mermaid
-graph TD
-    A[Source Schema] --> B[Generate Embeddings]
-    B --> C[Vector Search]
-    C --> D[Apply Rules]
-    D --> E[Calculate Confidence]
-    E --> F{High Confidence?}
-    F -->|Yes| G[Store Mapping]
-    F -->|No| H[LLM Analysis]
-    H --> I[Update Mapping]
-    I --> G
-```
-
-### 3.2 Confidence Scoring
-
-```python
-def calculate_confidence(
-    similarity: float,
-    type_match: bool,
-    rule_match: bool
-) -> float:
-    base_score = similarity * 0.6
-    type_score = 0.2 if type_match else 0
-    rule_score = 0.2 if rule_match else 0
-    return base_score + type_score + rule_score
-```
-
-### 3.3 Validation Rules
-
-```python
-def validate_mapping(
-    mapping_result: Dict[str, Any],
-    validation_rules: Optional[Dict] = None
+    sample_values: List[Any]
 ) -> Dict[str, Any]:
-    validation = {
-        "is_valid": True,
-        "warnings": [],
-        "errors": []
-    }
+    # Basic statistics
+    profile.update(self._analyze_basic_stats(series))
 
-    # Apply validation rules
-    if mapping_result["confidence_score"] < 0.7:
-        validation["warnings"].append(
-            "Low confidence score"
+    # Type-specific analysis
+    if np.issubdtype(series.dtype, np.number):
+        profile.update(await self._analyze_numeric(series))
+```
+
+Analysis types:
+
+- Statistical analysis
+- Pattern detection
+- Quality assessment
+- Relationship inference
+
+### 5. Error Handling
+
+Comprehensive error handling system:
+
+```python
+@handle_errors
+async def map_schemas(
+    self,
+    source_columns: List[Dict[str, Any]],
+    target_columns: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    try:
+        # Implementation
+    except Exception as e:
+        raise SchemaMapperError(
+            "Failed to map schemas",
+            details={"error": str(e)}
         )
-
-    return validation
 ```
 
-## 4. LLM Integration
+Features:
 
-### 4.1 Prompt Engineering
+- Custom exceptions
+- Error tracking
+- Retry mechanism
+- Fallback strategies
+
+### 6. Caching
+
+Multi-layer caching system:
 
 ```python
-def generate_mapping_prompt(
-    source_column: Dict,
-    target_column: Dict,
-    current_mapping: Dict
-) -> str:
-    return f"""
-    Analyze the following mapping:
-    Source: {source_column}
-    Target: {target_column}
-    Current: {current_mapping}
-    """
+@cache_result(expire=3600)
+async def generate_column_embedding(
+    self,
+    column_info: Dict[str, Any]
+) -> Dict[str, Any]:
+    # Implementation
 ```
 
-### 4.2 Response Processing
+Components:
 
-````python
-def parse_llm_response(response: str) -> Dict[str, Any]:
-    # Clean response
-    response = response.strip()
-    if response.startswith("```json"):
-        response = response[7:]
-    if response.endswith("```"):
-        response = response[:-3]
+- Redis primary cache
+- In-memory fallback
+- TTL-based expiration
+- Cache monitoring
 
-    # Parse JSON
-    return json.loads(response)
-````
+## Technical Details
 
-### 4.3 Error Handling
+### 1. Embedding Generation
 
-```python
-try:
-    result = await llm_service.analyze_mapping(
-        source_column,
-        target_column,
-        mapping
-    )
-except LLMError as e:
-    logging.error(f"LLM analysis failed: {str(e)}")
-    return fallback_result
-```
+The process of generating embeddings involves:
 
-## 5. Caching Strategy
+1. **Text Generation**:
 
-### 5.1 Multi-Level Cache
+   ```python
+   def _build_column_text(
+       self,
+       column_name: str,
+       data_type: str,
+       sample_values: List[str]
+   ) -> str:
+       components = []
 
-```python
-class CacheManager:
-    def __init__(self):
-        self.redis = Redis()  # Primary
-        self.memory = TTLCache()  # Fallback
+       # Add field description
+       description = get_field_description(column_name)
+       components.append(description)
 
-    async def get(self, key: str) -> Optional[Any]:
-        try:
-            return await self.redis.get(key)
-        except RedisError:
-            return self.memory.get(key)
-```
+       # Add contextual description
+       context = generate_contextual_description(
+           column_name,
+           data_type,
+           sample_values
+       )
+       components.append(context)
+   ```
 
-### 5.2 Cache Keys
+2. **Embedding Creation**:
 
-```python
-# Key formats
-mapping_key = f"mapping:{source}:{target}"
-embedding_key = f"embedding:{table}:{column}"
-profile_key = f"profile:{table}:{column}"
-```
+   ```python
+   embedding = self.model.encode(
+       column_text,
+       convert_to_tensor=False
+   )
+   ```
 
-### 5.3 TTL Configuration
+3. **Metadata Addition**:
+   ```python
+   metadata = {
+       "name": column_name,
+       "data_type": data_type,
+       "compatible_types": json.dumps(
+           get_compatible_types(data_type)
+       )
+   }
+   ```
 
-```python
-CACHE_TTL = {
-    "mapping": 3600,     # 1 hour
-    "embedding": 86400,  # 24 hours
-    "profile": 43200,    # 12 hours
-    "metadata": 300      # 5 minutes
-}
-```
+### 2. Mapping Process
 
-## 6. Error Handling
+The mapping process follows these steps:
 
-### 6.1 Custom Exceptions
+1. **Initial Search**:
 
-```python
-class SchemaMapperError(Exception):
-    def __init__(
-        self,
-        message: str,
-        error_code: str,
-        details: Optional[Dict] = None
-    ):
-        self.message = message
-        self.error_code = error_code
-        self.details = details
-        self.timestamp = datetime.utcnow()
-```
+   ```python
+   matches = await self.find_similar_columns(
+       query_embedding,
+       n_results=5,
+       score_threshold=0.7
+   )
+   ```
 
-### 6.2 Error Response Format
+2. **Rule Application**:
 
-```python
-def build_error_response(error: SchemaMapperError) -> Dict:
-    return {
-        "error": {
-            "code": error.error_code,
-            "message": error.message,
-            "details": error.details,
-            "timestamp": error.timestamp
-        }
-    }
-```
+   ```python
+   rule_results = apply_mapping_rules(
+       source_column,
+       mapping["matches"]
+   )
+   ```
 
-### 6.3 Retry Logic
+3. **Confidence Scoring**:
 
-```python
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=4, max=10)
-)
-async def call_with_retry(func, *args, **kwargs):
-    return await func(*args, **kwargs)
-```
+   ```python
+   confidence_score = calculate_confidence_score(
+       rule_results,
+       mapping.get("semantic_relationships", [])
+   )
+   ```
 
-## 7. Performance Optimization
+4. **LLM Analysis** (if needed):
+   ```python
+   if confidence_level == "low":
+       llm_result = await self._handle_low_confidence(
+           source_column,
+           mapping["matches"],
+           rule_results
+       )
+   ```
 
-### 7.1 Batch Processing
+### 3. Data Analysis
 
-```python
-async def process_batch(
-    items: List[Any],
-    batch_size: int = 50
-):
-    for batch in chunks(items, batch_size):
-        async with TaskGroup() as group:
-            for item in batch:
-                group.create_task(process_item(item))
-```
+The profiler performs multiple analyses:
 
-### 7.2 Connection Pooling
+1. **Statistical Analysis**:
 
-```python
-db_pool = await asyncpg.create_pool(
-    min_size=5,
-    max_size=20,
-    max_queries=50000,
-    timeout=60
-)
-```
+   ```python
+   async def _analyze_numeric(
+       self,
+       series: pd.Series
+   ) -> Dict[str, Any]:
+       stats = {
+           "min": float(series.min()),
+           "max": float(series.max()),
+           "mean": float(series.mean()),
+           "median": float(series.median()),
+           "std": float(series.std())
+       }
+   ```
 
-### 7.3 Resource Management
+2. **Pattern Detection**:
 
-```python
-async def monitor_resources():
-    while True:
-        metrics = {
-            "cpu": psutil.cpu_percent(),
-            "memory": psutil.virtual_memory().percent,
-            "disk": psutil.disk_usage('/').percent
-        }
-        await report_metrics(metrics)
-        await asyncio.sleep(60)
-```
+   ```python
+   async def _detect_value_patterns(
+       self,
+       series: pd.Series
+   ) -> Dict[str, Any]:
+       patterns = {
+           "email": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
+           "phone": r"^\+?1?\d{9,15}$",
+           "date": r"^\d{4}-\d{2}-\d{2}$"
+       }
+   ```
 
-## 8. Monitoring
+3. **Quality Assessment**:
+   ```python
+   async def _assess_data_quality(
+       self,
+       series: pd.Series
+   ) -> Dict[str, Any]:
+       quality = {
+           "completeness": 1 - (series.isnull().sum() / len(series)),
+           "validity": self._check_validity(series),
+           "consistency": self._check_consistency(series)
+       }
+   ```
 
-### 8.1 Metrics Collection
+### 4. Error Recovery
 
-```python
-metrics = {
-    "mapping_latency": Histogram(
-        name="mapping_latency_seconds",
-        buckets=[0.1, 0.5, 1.0, 2.0, 5.0]
-    ),
-    "cache_hits": Counter(
-        name="cache_hits_total"
-    ),
-    "error_rate": Gauge(
-        name="error_rate"
-    )
-}
-```
+The fallback service provides multiple recovery strategies:
 
-### 8.2 Health Checks
+1. **Rule-Based Matching**:
 
-```python
-async def check_health() -> Dict[str, Any]:
-    return {
-        "cache": await check_cache_health(),
-        "vector_store": await check_vector_store_health(),
-        "llm": await check_llm_health(),
-        "database": await check_database_health()
-    }
-```
+   ```python
+   async def _apply_rule_based_matching(
+       self,
+       column_name: str,
+       data_type: str,
+       sample_values: List[str]
+   ) -> Dict[str, Any]:
+       confidence = 0.0
+       rules_matched = []
 
-### 8.3 Logging
+       # Name-based rules
+       name_patterns = {
+           "id": r".*_id$",
+           "email": r".*_?email.*",
+           "date": r".*_?(date|dt)$"
+       }
+   ```
 
-```python
-logging.config.dictConfig({
-    "version": 1,
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "formatter": "json"
-        },
-        "file": {
-            "class": "logging.FileHandler",
-            "filename": "schema_mapper.log",
-            "formatter": "json"
-        }
-    }
-})
-```
+2. **Pattern Matching**:
 
-## 9. Testing Strategy
+   ```python
+   async def _apply_pattern_matching(
+       self,
+       column_name: str,
+       sample_values: List[str]
+   ) -> Dict[str, Any]:
+       confidence = 0.0
+       patterns_matched = []
 
-### 9.1 Unit Tests
+       # Value patterns
+       value_patterns = {
+           "email": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
+           "date_iso": r"^\d{4}-\d{2}-\d{2}$"
+       }
+   ```
 
-```python
-@pytest.mark.asyncio
-async def test_embedding_generation():
-    service = EmbeddingService()
-    embedding = await service.generate_column_embedding({
-        "name": "email",
-        "data_type": "VARCHAR",
-        "sample_values": ["test@example.com"]
-    })
-    assert embedding is not None
-    assert len(embedding) == 384  # Expected dimension
-```
+3. **Semantic Relations**:
+   ```python
+   async def _check_semantic_relation(
+       self,
+       source_column: Dict[str, Any],
+       target_column: Dict[str, Any]
+   ) -> Dict[str, Any]:
+       confidence = 0.0
+       relations = []
 
-### 9.2 Integration Tests
+       # Name similarity
+       similarity = SequenceMatcher(
+           None,
+           source_column["name"],
+           target_column["name"]
+       ).ratio()
+   ```
 
-```python
-@pytest.mark.asyncio
-async def test_end_to_end_mapping():
-    mapper = SchemaMapper()
-    result = await mapper.map_schemas(
-        source_schema,
-        target_schema
-    )
-    assert result["mappings"]
-    assert result["stats"]["total_mappings"] > 0
-```
+### 5. Performance Optimization
 
-### 9.3 Performance Tests
+Key optimization strategies:
 
-```python
-@pytest.mark.benchmark
-async def test_mapping_performance(benchmark):
-    result = await benchmark.async_run(
-        mapper.map_schemas,
-        large_source_schema,
-        large_target_schema
-    )
-    assert result["stats"]["total_time"] < 5.0  # Max 5 seconds
-```
+1. **Caching**:
+
+   ```python
+   class CacheManager:
+       def __init__(self):
+           self.redis_client = aioredis.Redis()
+           self.memory_cache = TTLCache(
+               maxsize=1000,
+               ttl=3600
+           )
+   ```
+
+2. **Batch Processing**:
+
+   ```python
+   async def build_vector_index(
+       self,
+       columns: List[Dict[str, Any]]
+   ) -> None:
+       embeddings = []
+       metadatas = []
+       documents = []
+
+       for column in columns:
+           result = await self.generate_column_embedding(
+               column
+           )
+           embeddings.append(result["embedding"])
+           metadatas.append(result["metadata"])
+           documents.append(result["text"])
+   ```
+
+3. **Connection Pooling**:
+   ```python
+   class DatabaseService:
+       def __init__(self):
+           self.pool = aiosqlite.create_pool(
+               database="schema_mapper.db",
+               minsize=5,
+               maxsize=20
+           )
+   ```
+
+### 6. Monitoring
+
+Monitoring components:
+
+1. **Metrics Collection**:
+
+   ```python
+   class MetricsCollector:
+       def __init__(self):
+           self.mapping_latency = Histogram()
+           self.cache_hits = Counter()
+           self.error_rate = Gauge()
+   ```
+
+2. **Health Checks**:
+
+   ```python
+   class HealthCheck:
+       async def check_services(self):
+           return {
+               "embedding": await self._check_embedding(),
+               "vector_store": await self._check_vectors(),
+               "llm": await self._check_llm(),
+               "cache": await self._check_cache()
+           }
+   ```
+
+3. **Performance Tracking**:
+   ```python
+   class PerformanceTracker:
+       async def track_operation(
+           self,
+           operation_name: str,
+           start_time: float
+       ):
+           duration = time.time() - start_time
+           self.metrics.observe(
+               operation_name,
+               duration
+           )
+   ```

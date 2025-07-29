@@ -1,89 +1,26 @@
 # Schema Mapper: Comprehensive Guide
 
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Architecture](#architecture)
+3. [Core Services](#core-services)
+4. [Features](#features)
+5. [Configuration](#configuration)
+6. [Error Handling](#error-handling)
+7. [Performance](#performance)
+8. [Best Practices](#best-practices)
+9. [Examples](#examples)
+
 ## Overview
 
-Schema Mapper is an intelligent system that automatically maps schemas between multiple source databases and a target database using embedding models, vector search, and machine learning. The system employs sophisticated profiling, fallback mechanisms, caching strategies, and error handling to ensure reliability and performance.
+Schema Mapper is an intelligent system for mapping database schemas using embedding models, vector search, and machine learning. It combines multiple strategies to achieve accurate column mappings:
 
-## Core Components
-
-### 1. Embedding Service
-
-The embedding service generates semantic representations of database columns using sentence transformers:
-
-```python
-# Generate column embedding
-embedding = await embedding_service.generate_column_embedding({
-    "name": "patient_id",
-    "data_type": "VARCHAR",
-    "sample_values": ["P123", "P456"]
-})
-```
-
-Features:
-
-- Semantic embedding generation
-- Business rules integration
-- Contextual descriptions
-- Vector similarity search
-
-### 2. Schema Mapping Service
-
-The schema mapper orchestrates the entire mapping process:
-
-```python
-# Map schemas
-result = await schema_mapper.map_schemas(
-    source_columns=source_schema,
-    target_columns=target_schema,
-    confidence_threshold=0.8
-)
-```
-
-Features:
-
-- Multi-strategy mapping
-- Confidence scoring
-- Rule-based validation
-- LLM integration for complex cases
-
-### 3. Data Profiler
-
-The data profiler analyzes source and target data:
-
-```python
-# Profile column
-profile = await data_profiler.profile_column(
-    column_data=data,
-    column_info={"name": "email", "data_type": "VARCHAR"}
-)
-```
-
-Features:
-
-- Statistical analysis
-- Pattern detection
-- Quality assessment
-- Type inference
-
-### 4. LLM Service
-
-The LLM service handles complex mapping scenarios:
-
-```python
-# Analyze mapping
-analysis = await llm_service.analyze_mapping(
-    source_column=source,
-    target_column=target,
-    current_mapping=mapping
-)
-```
-
-Features:
-
-- Complex mapping analysis
-- Validation
-- Transformation suggestions
-- Explanation generation
+- Embedding-based similarity search
+- Rule-based mapping
+- LLM-powered analysis
+- Data profiling
+- Fallback mechanisms
 
 ## Architecture
 
@@ -91,102 +28,220 @@ Features:
 
 ```mermaid
 graph TD
-    A[API Gateway] --> B[Schema Mapper]
+    A[API Gateway] --> B[Schema Mapper Service]
     B --> C[Embedding Service]
-    B --> D[Data Profiler]
-    B --> E[LLM Service]
+    B --> D[LLM Service]
+    B --> E[Profiler Service]
     C --> F[Vector Store]
-    B --> G[Cache]
-    B --> H[Error Handler]
+    B --> G[Database Service]
+    H[Error Handler] --> B
+    I[Cache Manager] --> B
+    J[Fallback Service] --> B
 ```
 
 ### Data Flow
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant API
-    participant Mapper
-    participant Profiler
-    participant Embedding
-    participant LLM
+1. **Input Processing**:
 
-    Client->>API: Map Schema Request
-    API->>Profiler: Profile Data
-    Profiler-->>API: Data Profiles
-    API->>Embedding: Generate Embeddings
-    Embedding-->>API: Column Embeddings
-    API->>Mapper: Map Schemas
-    Mapper->>LLM: Complex Cases
-    LLM-->>Mapper: Analysis
-    Mapper-->>API: Mapping Results
-    API-->>Client: Response
+   - Source schema extraction
+   - Target schema extraction
+   - Sample data collection
+
+2. **Mapping Process**:
+
+   - Generate embeddings
+   - Perform similarity search
+   - Apply mapping rules
+   - Profile data characteristics
+   - Validate mappings
+
+3. **Output Generation**:
+   - Confidence scoring
+   - Metadata storage
+   - Result formatting
+
+## Core Services
+
+### 1. Embedding Service
+
+```python
+class EmbeddingService:
+    async def generate_column_embedding(
+        self,
+        column_info: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        # Generate rich text description
+        # Create embedding
+        # Add metadata
 ```
+
+Features:
+
+- SentenceTransformer model
+- Rich text generation
+- Business rules integration
+- Vector similarity search
+
+### 2. Schema Mapper
+
+```python
+class SchemaMapper:
+    async def map_schemas(
+        self,
+        source_columns: List[Dict[str, Any]],
+        target_columns: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        # Orchestrate mapping process
+        # Handle confidence levels
+        # Manage LLM integration
+```
+
+Features:
+
+- Mapping orchestration
+- Confidence scoring
+- LLM integration
+- Result validation
+
+### 3. Profiler Service
+
+```python
+class ProfilerService:
+    async def profile_column(
+        self,
+        column_name: str,
+        data_type: str,
+        sample_values: List[Any]
+    ) -> Dict[str, Any]:
+        # Analyze statistics
+        # Detect patterns
+        # Assess quality
+```
+
+Features:
+
+- Statistical analysis
+- Pattern detection
+- Quality assessment
+- Relationship detection
+
+### 4. Fallback Service
+
+```python
+class FallbackService:
+    async def handle_failure(
+        self,
+        service_name: str,
+        error: Exception,
+        context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        # Choose fallback strategy
+        # Apply fallback logic
+        # Handle retries
+```
+
+Features:
+
+- Multiple fallback strategies
+- Retry mechanism
+- Error tracking
+- Performance monitoring
+
+## Features
+
+### 1. Intelligent Mapping
+
+- Semantic similarity search
+- Business rules integration
+- Pattern matching
+- Type compatibility
+
+### 2. Data Profiling
+
+- Statistical analysis
+- Pattern detection
+- Quality assessment
+- Relationship inference
+
+### 3. Error Handling
+
+- Custom exceptions
+- Retry mechanism
+- Fallback strategies
+- Error tracking
+
+### 4. Performance Optimization
+
+- Caching system
+- Batch processing
+- Connection pooling
+- Resource management
 
 ## Configuration
 
 ### 1. Environment Variables
 
-```bash
-# .env
+```env
+# API Configuration
+API_HOST=localhost
+API_PORT=8000
+API_DEBUG=false
+
+# Database Configuration
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=schema_mapper
+DB_USER=admin
+DB_PASSWORD=secret
+
+# Vector Store Configuration
 VECTOR_STORE_PATH=./chroma_db
-LLM_API_URL=http://localhost:8000
-CACHE_URL=redis://localhost:6379
+COLLECTION_NAME=schema_embeddings
+
+# LLM Configuration
+LLM_API_URL=http://localhost:8001
+LLM_API_KEY=your_api_key
+
+# Cache Configuration
+REDIS_HOST=localhost
+REDIS_PORT=6379
+CACHE_TTL=3600
 ```
 
-### 2. Mapping Rules
+### 2. Business Rules
 
 ```python
-# mapping_rules.py
-TYPE_COMPATIBILITY = {
+# Healthcare field descriptions
+HEALTHCARE_FIELDS = {
+    "patient_id": "Unique identifier for patient records",
+    "npi": "National Provider Identifier",
+    "icd_code": "International Classification of Diseases code"
+}
+
+# Data type compatibility
+DATA_TYPE_COMPATIBILITY = {
     "VARCHAR": ["VARCHAR", "TEXT", "CHAR"],
-    "INTEGER": ["INTEGER", "BIGINT", "SMALLINT"],
-    "FLOAT": ["FLOAT", "DOUBLE", "DECIMAL"]
+    "INTEGER": ["INTEGER", "BIGINT", "SMALLINT"]
 }
 ```
 
-### 3. Profiling Rules
+### 3. Mapping Rules
 
 ```python
-# profiling_rules.py
-THRESHOLDS = {
-    "completeness": 0.95,
-    "validity": 0.98,
-    "consistency": 0.90
+# Confidence thresholds
+CONFIDENCE_THRESHOLDS = {
+    "high": 0.8,
+    "medium": 0.6,
+    "low": 0.4
 }
-```
 
-## API Reference
-
-### 1. Schema Mapping
-
-```http
-POST /api/v1/mapping/map-schemas
-Content-Type: application/json
-
-{
-    "source_schema": [...],
-    "target_schema": [...],
-    "confidence_threshold": 0.8
+# Quality weights
+QUALITY_WEIGHTS = {
+    "completeness": 0.3,
+    "validity": 0.3,
+    "consistency": 0.2,
+    "uniqueness": 0.2
 }
-```
-
-### 2. Data Profiling
-
-```http
-POST /api/v1/profiling/profile-data
-Content-Type: application/json
-
-{
-    "table_name": "patients",
-    "columns": [...]
-}
-```
-
-### 3. Mapping Suggestions
-
-```http
-GET /api/v1/mapping/suggestions?column=patient_id
 ```
 
 ## Error Handling
@@ -195,202 +250,157 @@ GET /api/v1/mapping/suggestions?column=patient_id
 
 ```python
 class SchemaMapperError(Exception):
-    def __init__(self, message: str, error_code: str, details: Dict = None):
+    def __init__(
+        self,
+        message: str,
+        details: Dict[str, Any]
+    ):
         self.message = message
-        self.error_code = error_code
         self.details = details
 ```
 
-### 2. Error Response Format
-
-```json
-{
-  "error": {
-    "code": "EMBEDDING_ERROR",
-    "message": "Failed to generate embedding",
-    "details": {
-      "column": "patient_id",
-      "reason": "Invalid data type"
-    }
-  }
-}
-```
-
-## Caching Strategy
-
-### 1. Multi-Level Cache
+### 2. Error Handler
 
 ```python
-class CacheManager:
-    def __init__(self):
-        self.redis = Redis()  # Primary cache
-        self.memory = TTLCache()  # Fallback cache
+@handle_errors
+async def map_schemas(
+    self,
+    source_columns: List[Dict[str, Any]],
+    target_columns: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    # Implementation
 ```
 
-### 2. Cache Configuration
+### 3. Fallback Strategies
 
 ```python
-CACHE_CONFIG = {
-    "mapping_ttl": 3600,    # 1 hour
-    "embedding_ttl": 86400, # 24 hours
-    "metadata_ttl": 300     # 5 minutes
-}
+async def _fallback_embedding(
+    self,
+    context: Dict[str, Any]
+) -> Dict[str, Any]:
+    # Try cache
+    # Apply rule-based matching
+    # Use pattern matching
 ```
 
-## Performance Optimization
+## Performance
 
-### 1. Batch Processing
+### 1. Caching
 
 ```python
-async def batch_generate_embeddings(
-    columns: List[Dict],
-    batch_size: int = 50
-):
-    for batch in chunks(columns, batch_size):
-        await process_batch(batch)
+@cache_result(expire=3600)
+async def generate_column_embedding(
+    self,
+    column_info: Dict[str, Any]
+) -> Dict[str, Any]:
+    # Implementation
 ```
 
-### 2. Connection Pooling
+### 2. Batch Processing
 
 ```python
-DB_POOL_CONFIG = {
-    "min_size": 5,
-    "max_size": 20,
-    "max_queries": 50000
-}
+async def build_vector_index(
+    self,
+    columns: List[Dict[str, Any]]
+) -> None:
+    # Process in batches
+    # Update index
 ```
 
-## Monitoring
-
-### 1. Metrics Collection
+### 3. Resource Management
 
 ```python
-metrics = {
-    "mapping_latency": Histogram(),
-    "cache_hits": Counter(),
-    "error_rate": Gauge()
-}
-```
+async def __aenter__(self):
+    # Acquire resources
+    return self
 
-### 2. Health Checks
-
-```python
-async def check_health():
-    return {
-        "cache": await check_cache(),
-        "vector_store": await check_vectors(),
-        "llm": await check_llm()
-    }
+async def __aexit__(self, exc_type, exc, tb):
+    # Release resources
 ```
 
 ## Best Practices
 
 ### 1. Schema Mapping
 
-- Profile data before mapping
-- Use business rules for context
-- Set appropriate confidence thresholds
-- Handle edge cases gracefully
+- Use rich column descriptions
+- Consider multiple matches
+- Validate results
+- Handle edge cases
 
-### 2. Data Profiling
+### 2. Error Handling
 
-- Analyze data quality
-- Detect patterns and relationships
-- Infer semantic types
-- Validate data consistency
+- Implement retries
+- Use fallbacks
+- Log errors
+- Monitor performance
 
-### 3. Error Handling
+### 3. Performance
 
-- Use appropriate error types
-- Provide detailed error messages
-- Implement fallback strategies
-- Log errors for monitoring
-
-### 4. Performance
-
-- Use caching effectively
-- Implement batch processing
-- Monitor resource usage
-- Optimize critical paths
+- Cache common queries
+- Process in batches
+- Monitor resources
+- Optimize searches
 
 ## Examples
 
-### 1. Basic Mapping
+### 1. Simple Mapping
 
 ```python
-from schema_mapper import SchemaMapper
+# Source column
+source = {
+    "name": "patient_id",
+    "data_type": "VARCHAR",
+    "sample_values": ["P123", "P456"]
+}
 
-mapper = SchemaMapper()
-result = await mapper.map_schemas(source_schema, target_schema)
+# Target column
+target = {
+    "name": "id",
+    "data_type": "VARCHAR",
+    "sample_values": ["PAT123"]
+}
+
+# Map columns
+result = await mapper.map_schemas(
+    [source],
+    [target]
+)
 ```
 
-### 2. Data Profiling
+### 2. Complex Mapping
 
 ```python
-from schema_mapper import DataProfiler
+# Source columns
+source_columns = [
+    {
+        "name": "email_address",
+        "data_type": "VARCHAR",
+        "sample_values": ["user@example.com"]
+    },
+    {
+        "name": "birth_date",
+        "data_type": "DATE",
+        "sample_values": ["1990-01-01"]
+    }
+]
 
-profiler = DataProfiler()
-profile = await profiler.profile_column(data, column_info)
+# Target columns
+target_columns = [
+    {
+        "name": "email",
+        "data_type": "VARCHAR",
+        "sample_values": ["contact@example.com"]
+    },
+    {
+        "name": "dob",
+        "data_type": "DATE",
+        "sample_values": ["1985-12-31"]
+    }
+]
+
+# Map schemas
+result = await mapper.map_schemas(
+    source_columns,
+    target_columns
+)
 ```
-
-### 3. Complex Mapping
-
-```python
-# Handle low confidence cases with LLM
-if mapping["confidence_score"] < threshold:
-    analysis = await llm_service.analyze_mapping(
-        source_column,
-        target_column,
-        mapping
-    )
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Low Confidence Mappings**
-
-   - Check data quality
-   - Verify business rules
-   - Review profiling results
-   - Consider LLM analysis
-
-2. **Performance Issues**
-
-   - Monitor cache hit rates
-   - Check batch sizes
-   - Verify connection pools
-   - Review resource usage
-
-3. **Data Quality Issues**
-   - Run data profiling
-   - Check validation rules
-   - Verify data consistency
-   - Update business rules
-
-## Future Enhancements
-
-1. **Advanced Features**
-
-   - Schema evolution tracking
-   - Automated schema migration
-   - Machine learning improvements
-   - Real-time mapping updates
-
-2. **Integration Options**
-   - GraphQL support
-   - Streaming capabilities
-   - Custom plugin system
-   - External tool integration
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch
-3. Add tests for new features
-4. Submit a pull request
-
-## License
-
-MIT License - see LICENSE file for details.
