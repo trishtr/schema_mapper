@@ -16,7 +16,10 @@ from .config.profiling_rules import (
     suggest_column_type,
     THRESHOLDS,
     QUALITY_WEIGHTS,
-    PATTERN_THRESHOLDS
+    PATTERN_THRESHOLDS,
+    STATISTICAL_THRESHOLDS,
+    TYPE_INFERENCE_RULES,
+    RELATIONSHIP_RULES
 )
 
 class ProfilerService:
@@ -66,6 +69,11 @@ class ProfilerService:
                 series
             )
             
+            # Type inference
+            profile["type_inference"] = suggest_column_type(
+                [str(v) for v in sample_values if v is not None]
+            )
+            
             # Cache profile
             self.profile_cache[column_name] = profile
             
@@ -109,7 +117,7 @@ class ProfilerService:
             }
         }
         
-        # Detect outliers
+        # Detect outliers using IQR method
         q1 = stats["quartiles"]["q1"]
         q3 = stats["quartiles"]["q3"]
         iqr = q3 - q1
@@ -129,6 +137,14 @@ class ProfilerService:
             }
         }
         
+        # Distribution analysis
+        stats["distribution"] = {
+            "skewness": float(series.skew()),
+            "kurtosis": float(series.kurtosis()),
+            "is_normal": abs(series.skew()) <= STATISTICAL_THRESHOLDS["normal_skewness"] and 
+                        abs(series.kurtosis()) <= STATISTICAL_THRESHOLDS["normal_kurtosis"]
+        }
+        
         return stats
     
     async def _analyze_string(
@@ -139,27 +155,34 @@ class ProfilerService:
         # Remove null values
         series = series.dropna()
         
+        if len(series) == 0:
+            return {
+                "length_stats": {"min": 0, "max": 0, "mean": 0, "median": 0},
+                "case_stats": {"upper": 0, "lower": 0, "mixed": 0},
+                "char_types": {"alpha": 0, "numeric": 0, "alphanumeric": 0, "spaces": 0, "special": 0}
+            }
+        
         stats = {
             "length_stats": {
-                "min": min(series.str.len()),
-                "max": max(series.str.len()),
+                "min": int(series.str.len().min()),
+                "max": int(series.str.len().max()),
                 "mean": float(series.str.len().mean()),
                 "median": float(series.str.len().median())
             },
             "case_stats": {
-                "upper": sum(series.str.isupper()) / len(series),
-                "lower": sum(series.str.islower()) / len(series),
-                "mixed": sum(~(series.str.isupper() | series.str.islower())) / len(series)
+                "upper": float(sum(series.str.isupper()) / len(series)),
+                "lower": float(sum(series.str.islower()) / len(series)),
+                "mixed": float(sum(~(series.str.isupper() | series.str.islower())) / len(series))
             }
         }
         
         # Character type analysis
         stats["char_types"] = {
-            "alpha": sum(series.str.isalpha()) / len(series),
-            "numeric": sum(series.str.isnumeric()) / len(series),
-            "alphanumeric": sum(series.str.isalnum()) / len(series),
-            "spaces": sum(series.str.contains(r"\s")) / len(series),
-            "special": sum(series.str.contains(r"[^a-zA-Z0-9\s]")) / len(series)
+            "alpha": float(sum(series.str.isalpha()) / len(series)),
+            "numeric": float(sum(series.str.isnumeric()) / len(series)),
+            "alphanumeric": float(sum(series.str.isalnum()) / len(series)),
+            "spaces": float(sum(series.str.contains(r"\s", na=False)) / len(series)),
+            "special": float(sum(series.str.contains(r"[^a-zA-Z0-9\s]", na=False)) / len(series))
         }
         
         return stats
@@ -210,29 +233,29 @@ class ProfilerService:
         else:
             # Check string patterns
             valid_pattern = re.compile(r"^[\w\s\-\.@]+$")
-            quality["validity"] = sum(
-                series.dropna().astype(str).str.match(valid_pattern)
-            ) / len(series)
+            valid_count = sum(
+                series.dropna().astype(str).str.match(valid_pattern, na=False)
+            )
+            quality["validity"] = valid_count / len(series) if len(series) > 0 else 0.0
         
         # Consistency check
         if len(series) > 1:
             # Check value patterns
             first_value = str(series.iloc[0])
-            pattern = re.compile(
-                r"[A-Za-z]" if first_value.isalpha()
-                else r"\d" if first_value.isdigit()
-                else r"."
+            if first_value.isalpha():
+                pattern = re.compile(r"^[A-Za-z]+$")
+            elif first_value.isdigit():
+                pattern = re.compile(r"^\d+$")
+            else:
+                pattern = re.compile(r".*")
+            
+            consistent_count = sum(
+                series.dropna().astype(str).str.match(pattern, na=False)
             )
-            quality["consistency"] = sum(
-                series.dropna().astype(str).str.match(pattern)
-            ) / len(series)
+            quality["consistency"] = consistent_count / len(series) if len(series) > 0 else 0.0
         
-        # Overall score
-        quality["overall_score"] = sum(
-            score * QUALITY_WEIGHTS[metric]
-            for metric, score in quality.items()
-            if metric != "overall_score"
-        )
+        # Overall score using the function from profiling_rules
+        quality["overall_score"] = get_quality_score(quality)
         
         return quality
     
@@ -254,9 +277,12 @@ class ProfilerService:
         results = {}
         series_str = series.dropna().astype(str)
         
+        if len(series_str) == 0:
+            return results
+        
         for pattern_name, pattern in patterns.items():
-            matches = series_str.str.match(pattern)
-            match_ratio = sum(matches) / len(series)
+            matches = series_str.str.match(pattern, na=False)
+            match_ratio = sum(matches) / len(series_str)
             
             if match_ratio >= PATTERN_THRESHOLDS[pattern_name]:
                 results[pattern_name] = match_ratio
@@ -269,14 +295,16 @@ class ProfilerService:
         series: pd.Series
     ) -> Dict[str, Any]:
         """Detect potential relationships."""
+        unique_ratio = series.nunique() / len(series)
+        null_ratio = series.isnull().sum() / len(series)
+        
         relationships = {
-            "type": check_relationship_type(column_name),
+            "type": check_relationship_type(unique_ratio, null_ratio),
             "cardinality": "unknown",
             "suggested_references": []
         }
         
         # Detect cardinality
-        unique_ratio = series.nunique() / len(series)
         if unique_ratio == 1.0:
             relationships["cardinality"] = "one_to_one"
         elif unique_ratio >= 0.9:
@@ -292,4 +320,56 @@ class ProfilerService:
             relationships["suggested_references"].append(f"{base_name}s")
             relationships["suggested_references"].append(base_name)
         
-        return relationships 
+        return relationships
+    
+    async def profile_multiple_columns(
+        self,
+        columns_data: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Profile multiple columns."""
+        profiles = []
+        
+        for column_data in columns_data:
+            profile = await self.profile_column(
+                column_data["name"],
+                column_data["data_type"],
+                column_data["sample_values"]
+            )
+            profiles.append(profile)
+        
+        return profiles
+    
+    async def get_profile_statistics(
+        self
+    ) -> Dict[str, Any]:
+        """Get overall profiling statistics."""
+        if not self.profile_cache:
+            return {
+                "total_columns": 0,
+                "average_quality_score": 0.0,
+                "quality_distribution": {},
+                "type_distribution": {}
+            }
+        
+        total_columns = len(self.profile_cache)
+        quality_scores = [
+            profile.get("quality", {}).get("overall_score", 0.0)
+            for profile in self.profile_cache.values()
+        ]
+        
+        type_distribution = {}
+        for profile in self.profile_cache.values():
+            data_type = profile.get("data_type", "unknown")
+            type_distribution[data_type] = type_distribution.get(data_type, 0) + 1
+        
+        return {
+            "total_columns": total_columns,
+            "average_quality_score": sum(quality_scores) / len(quality_scores) if quality_scores else 0.0,
+            "quality_distribution": {
+                "excellent": sum(1 for score in quality_scores if score >= 0.9),
+                "good": sum(1 for score in quality_scores if 0.7 <= score < 0.9),
+                "fair": sum(1 for score in quality_scores if 0.5 <= score < 0.7),
+                "poor": sum(1 for score in quality_scores if score < 0.5)
+            },
+            "type_distribution": type_distribution
+        } 
