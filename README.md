@@ -4,13 +4,13 @@ An intelligent schema mapping system that uses embedding models, vector search, 
 
 ## Features
 
-- 🧠 Intelligent schema mapping using embedding models
-- 🔍 Vector similarity search for finding related columns
-- 🤖 LLM integration for complex mapping scenarios
-- 💾 Multiple source database support
-- 🚀 High-performance caching and fallback mechanisms
-- ⚡ Asynchronous processing
-- 🛡️ Robust error handling
+-  Intelligent schema mapping using embedding models
+-  Vector similarity search for finding related columns
+-  LLM integration for complex mapping scenarios
+-  Multiple source database support
+-  High-performance caching and fallback mechanisms
+-  Asynchronous processing
+-  Robust error handling
 
 ## Quick Start
 
